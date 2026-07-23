@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+config.toml
+mcp.json
+data/recent.json
+data/MEMORY.md
+data/SOUL.md
+data/USER.md
+*.log
