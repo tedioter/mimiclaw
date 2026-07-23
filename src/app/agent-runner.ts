@@ -10,6 +10,8 @@ export type AgentResponder = {
   respond(inbound: InboundMessage): AsyncIterable<AgentEvent>;
 };
 
+export type AgentTurnCommitter = (inbound: InboundMessage, assistantReply: string) => Promise<void>;
+
 export function createAgentLoopControl(): AgentLoopControl {
   let active = true;
   return {
@@ -23,7 +25,8 @@ export function createAgentLoopControl(): AgentLoopControl {
 export async function runAgentLoop(
   agent: AgentResponder,
   bus: MessageBus,
-  control: AgentLoopControl
+  control: AgentLoopControl,
+  commitTurn?: AgentTurnCommitter
 ): Promise<void> {
   while (control.isActive()) {
     let inbound;
@@ -35,12 +38,19 @@ export async function runAgentLoop(
       }
       throw error;
     }
+    let assistantReply: string | undefined;
     for await (const event of agent.respond(inbound)) {
+      if (event.type === "turn_done") {
+        assistantReply = event.text;
+      }
       bus.publishOutbound({
         platform: inbound.platform,
         event,
         ...(inbound.messageId ? { messageId: inbound.messageId } : {})
       });
+    }
+    if (assistantReply !== undefined) {
+      await commitTurn?.(inbound, assistantReply);
     }
   }
 }

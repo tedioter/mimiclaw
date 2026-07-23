@@ -1,26 +1,27 @@
-import type { AppConfig } from "../config/types.js";
-import { MimiError, ModelError, errorMessage, errorName } from "../types/errors.js";
+import type { DisplayConfig } from "../config/types.js";
+import { MimiError, ModelError } from "../types/errors.js";
 import type { AgentEvent, InboundMessage } from "../types/events.js";
-import { commitTurn } from "../memory/commit-turn.js";
-import { buildPrompt } from "./prompt.js";
-import type { Memory } from "../memory/memory.js";
+import type { AgentContext } from "./context.js";
 import type { PendingToolCall } from "../tools/base.js";
-import type { ToolRegistry } from "../tools/toolregistry.js";
 import { AsyncMutexLock } from "../utils/async-mutex-lock.js";
 import { formatErrorForLog, summarizeLogText, writeLog } from "../utils/log.js";
 import { buildTurnId } from "../utils/turn-id.js";
-import type { Model } from "../model/index.js";
+import type { Model, ModelMessage } from "../model/index.js";
 import { executeToolCall, formatToolIntent, parsePendingToolCalls } from "./tool-executor.js";
+
+export type AgentOptions = Readonly<{
+  display: DisplayConfig;
+  enableThinking: boolean;
+}>;
 
 export class Agent {
   private readonly turnLock = new AsyncMutexLock();
   private closePromise?: Promise<void>;
 
   constructor(
-    private readonly config: AppConfig,
     private readonly model: Model,
-    private readonly memory: Memory,
-    private readonly tools: ToolRegistry
+    private readonly context: AgentContext,
+    private readonly options: AgentOptions
   ) {}
 
   close(): Promise<void> {
@@ -52,23 +53,6 @@ export class Agent {
           turnId,
           content: summarizeLogText(assistantReply)
         });
-        try {
-          await commitTurn(
-            this.config.memory,
-            this.model,
-            this.memory,
-            inbound,
-            assistantReply,
-            turnId
-          );
-        } catch (error) {
-          writeLog("error", "memory", {
-            turnId,
-            type: "memory_commit_error",
-            errorName: errorName(error),
-            content: summarizeLogText(errorMessage(error))
-          });
-        }
         yield { type: "turn_done", text: assistantReply };
       } catch (error) {
         writeLog("error", "error", {
@@ -88,15 +72,19 @@ export class Agent {
   }
 
   private async *runTurn(inbound: InboundMessage, turnId: string): AsyncIterable<AgentEvent> {
-    const messages = buildPrompt(this.memory, inbound.text);
+    const messages: ModelMessage[] = [
+      { role: "system", content: this.context.prompt },
+      ...this.context.messages,
+      { role: "user", content: inbound.text }
+    ];
     while (true) {
       const pendingToolCalls = new Map<number, PendingToolCall>();
       const responseText: string[] = [];
       const reasoningText: string[] = [];
-      for await (const event of this.model.streamChat(messages, this.tools.schemas())) {
-        if (event.type === "model_thinking_delta" && this.config.model.enableThinking) {
+      for await (const event of this.model.streamChat(messages, this.context.tools.schemas())) {
+        if (event.type === "model_thinking_delta" && this.options.enableThinking) {
           reasoningText.push(event.text);
-          if (this.config.display.showThinking) {
+          if (this.options.display.showThinking) {
             yield { type: "thinking_delta", text: event.text };
           }
         } else if (event.type === "model_text_delta") {
@@ -128,7 +116,7 @@ export class Agent {
       messages.push({
         role: "assistant",
         content: responseText.join("") || null,
-        ...(this.config.model.enableThinking && reasoningText.length
+        ...(this.options.enableThinking && reasoningText.length
           ? { reasoning_content: reasoningText.join("") }
           : {}),
         tool_calls: calls.map(({ call, rawArguments }) => ({
@@ -138,13 +126,13 @@ export class Agent {
         }))
       });
       for (const { call, argumentError } of calls) {
-        if (this.config.display.showToolCalls) {
+        if (this.options.display.showToolCalls) {
           yield { type: "tool_intent", toolName: call.name, intent: formatToolIntent(call) };
         }
         messages.push({
           role: "tool",
           tool_call_id: call.callId,
-          content: await executeToolCall(this.tools, call, turnId, argumentError)
+          content: await executeToolCall(this.context.tools, call, turnId, argumentError)
         });
       }
     }

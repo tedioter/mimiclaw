@@ -1,14 +1,16 @@
 import path from "node:path";
 import { z } from "zod";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Agent } from "../src/agent/agent.js";
+import { commitTurn } from "../src/app/turn-coordinator.js";
 import { LongTermMemory, Memory, ShortTermMemory } from "../src/memory/index.js";
 import { ToolRegistry } from "../src/tools/toolregistry.js";
 import { Tool } from "../src/tools/base.js";
 import { buildTurnId } from "../src/utils/turn-id.js";
+import type { AgentEvent } from "../src/types/events.js";
 import {
   FakeModel,
   cleanupTemporaryDirectories,
+  createTestAgent,
   makeConfig,
   temporaryDirectory,
   testTool
@@ -43,7 +45,12 @@ describe("Agent 工具循环", () => {
     const root = temporaryDirectory();
     const model = new FakeModel([]);
     const close = vi.spyOn(model, "close");
-    const agent = new Agent(makeConfig(root), model, createMemory(root), new ToolRegistry([]));
+    const agent = createTestAgent(
+      makeConfig(root),
+      model,
+      createMemory(root),
+      new ToolRegistry([])
+    );
 
     await Promise.all([agent.close(), agent.close()]);
     await agent.close();
@@ -71,7 +78,7 @@ describe("Agent 工具循环", () => {
       [{ type: "model_text_delta", text: "已完成。" }]
     ]);
     const { tool } = createCountingTool();
-    const agent = new Agent(config, model, createMemory(root), new ToolRegistry([tool]));
+    const agent = createTestAgent(config, model, createMemory(root), new ToolRegistry([tool]));
 
     for await (const _event of agent.respond({ platform: "cli", text: "执行" })) {
       // 消费完整事件流
@@ -103,7 +110,7 @@ describe("Agent 工具循环", () => {
       [{ type: "model_text_delta", text: "已完成。" }]
     ]);
     const { tool } = createCountingTool();
-    const agent = new Agent(config, model, createMemory(root), new ToolRegistry([tool]));
+    const agent = createTestAgent(config, model, createMemory(root), new ToolRegistry([tool]));
 
     for await (const _event of agent.respond({ platform: "cli", text: "执行" })) {
       // 消费完整事件流
@@ -133,7 +140,7 @@ describe("Agent 工具循环", () => {
       ],
       [{ type: "model_text_delta", text: "修复已完成。" }]
     ]);
-    const agent = new Agent(
+    const agent = createTestAgent(
       config,
       model,
       createMemory(root),
@@ -176,11 +183,26 @@ describe("Agent 工具循环", () => {
     ]);
     const { tool, state } = createCountingTool();
     const memory = createMemory(root);
-    const agent = new Agent(makeConfig(root), model, memory, new ToolRegistry([tool]));
+    const config = makeConfig(root);
+    const agent = createTestAgent(config, model, memory, new ToolRegistry([tool]));
     const events = [];
     for await (const event of agent.respond({ platform: "cli", text: "执行" })) {
       events.push(event);
     }
+    const done = events.find(
+      (event): event is Extract<AgentEvent, { type: "turn_done" }> => event.type === "turn_done"
+    );
+    if (!done) {
+      throw new Error("测试轮次没有完成事件");
+    }
+    await commitTurn(
+      config.memory,
+      model,
+      memory,
+      { platform: "cli", text: "执行" },
+      done.text,
+      buildTurnId({ platform: "cli" })
+    );
     expect(state.count).toBe(2);
     expect(events.filter((event) => event.type === "tool_intent")).toHaveLength(2);
     expect(memory.shortTerm.loadState().turns[0]?.assistant).toBe("已执行两次。");
@@ -208,7 +230,7 @@ describe("Agent 工具循环", () => {
       ],
       [{ type: "model_text_delta", text: "已处理失败信息。" }]
     ]);
-    const agent = new Agent(
+    const agent = createTestAgent(
       makeConfig(root),
       model,
       createMemory(root),

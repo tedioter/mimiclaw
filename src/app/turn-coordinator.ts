@@ -4,8 +4,8 @@ import type { InboundMessage } from "../types/events.js";
 import {
   buildContextCompressionMessages,
   parseContextCompressionResult
-} from "./compress-context.js";
-import type { Memory } from "./memory.js";
+} from "../memory/compress-context.js";
+import type { Memory } from "../memory/memory.js";
 import { summarizeLogText, writeLog } from "../utils/log.js";
 import type { Model, ModelMessage } from "../model/index.js";
 

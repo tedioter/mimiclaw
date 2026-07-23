@@ -39,19 +39,32 @@ function buildSystemPrompt(
   return systemPrompt.join("\n\n");
 }
 
-export function buildPrompt(memory: Memory, userText: string): ModelMessage[] {
+export type PromptContext = Readonly<{
+  prompt: string;
+  messages: ModelMessage[];
+}>;
+
+export function buildPromptContext(memory: Memory): PromptContext {
   const state = memory.shortTerm.loadState();
+  return {
+    prompt: buildSystemPrompt(
+      memory.longTerm.readSoul(),
+      memory.longTerm.readUser(),
+      memory.longTerm.readMemory(),
+      state.summary
+    ),
+    messages: memory.shortTerm.asMessages(state)
+  };
+}
+
+export function buildPrompt(memory: Memory, userText: string): ModelMessage[] {
+  const context = buildPromptContext(memory);
   return [
     {
       role: "system",
-      content: buildSystemPrompt(
-        memory.longTerm.readSoul(),
-        memory.longTerm.readUser(),
-        memory.longTerm.readMemory(),
-        state.summary
-      )
+      content: context.prompt
     },
-    ...memory.shortTerm.asMessages(state),
+    ...context.messages,
     { role: "user", content: userText }
   ];
 }

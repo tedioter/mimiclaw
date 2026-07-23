@@ -1,10 +1,13 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { Agent } from "../src/agent/agent.js";
+import { createAgentContext } from "../src/agent/context.js";
+import { buildPromptContext } from "../src/agent/prompt.js";
 import type { ToolConfig, AppConfig } from "../src/config/types.js";
 import type { Model, ModelEvent, ModelMessage } from "../src/model/index.js";
 import { LongTermMemory, Memory, ShortTermMemory } from "../src/memory/index.js";
-import { createTools } from "../src/tools/toolregistry.js";
+import { createTools, ToolRegistry } from "../src/tools/toolregistry.js";
 import type { Tool } from "../src/tools/base.js";
 import { ToolError } from "../src/types/errors.js";
 
@@ -82,6 +85,19 @@ export function makeConfig(root: string, toolOverrides: Partial<ToolConfig> = {}
     },
     dataDir: path.join(root, "data")
   };
+}
+
+export function createTestAgent(
+  config: AppConfig,
+  model: Model,
+  memory: Memory,
+  tools: ToolRegistry
+): Agent {
+  const promptContext = buildPromptContext(memory);
+  return new Agent(model, createAgentContext(promptContext.prompt, promptContext.messages, tools), {
+    display: config.display,
+    enableThinking: config.model.enableThinking
+  });
 }
 
 export class FakeModel implements Model {
