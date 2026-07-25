@@ -4,11 +4,10 @@ import {
   type ReplyTarget,
   type StreamSession
 } from "@tencent-connect/qqbot-nodejs";
-import type { BusOutboundMessage } from "../bus/message-bus.js";
-import type { MessageBus } from "../bus/message-bus.js";
+import type { BusOutboundMessage, MessageBus, OutboundMessage } from "../bus/message-bus.js";
 import type { QQConfig } from "../config/types.js";
 import { ConfigError, PlatformError, errorMessage, errorName } from "../types/errors.js";
-import type { AgentEvent, OutboundMessage } from "../types/events.js";
+import type { AgentEvent } from "../types/events.js";
 import { createDeferred, withTimeout } from "../utils/async.js";
 import { writeLog } from "../utils/log.js";
 import { takeSplitChunk } from "../utils/message-splitter.js";
@@ -97,8 +96,10 @@ export class QQStreamSession {
       if (this.phase === "thinking") {
         this.pending.push(QQStreamSession.thinkingClose);
         this.pending.push("\n\n");
-        this.phase = undefined;
       }
+      // 工具轮旁白不计入最终回答，避免 turn_done 补发时重复拼接。
+      this.answerParts = [];
+      this.phase = undefined;
       this.pending.push(`\n\n> 工具调用：${event.toolName}：${event.intent}\n\n`);
       await this.flush();
     } else if (event.type === "turn_error") {

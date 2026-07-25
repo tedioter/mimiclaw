@@ -20,7 +20,7 @@ function mcpToolName(serverId: string, toolName: string): string {
 export class McpProxyTool extends Tool {
   readonly name: string;
   readonly description: string;
-  readonly schema = z.object({}).passthrough();
+  readonly schema = z.looseObject({});
   readonly parameters: Record<string, unknown>;
 
   constructor(

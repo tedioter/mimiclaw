@@ -1,10 +1,9 @@
 import * as lark from "@larksuiteoapi/node-sdk";
 import crypto from "node:crypto";
-import type { BusOutboundMessage } from "../bus/message-bus.js";
-import type { MessageBus } from "../bus/message-bus.js";
+import type { BusOutboundMessage, MessageBus, OutboundMessage } from "../bus/message-bus.js";
 import type { FeishuConfig } from "../config/types.js";
 import { ConfigError, PlatformError, errorMessage, errorName } from "../types/errors.js";
-import type { AgentEvent, OutboundMessage } from "../types/events.js";
+import type { AgentEvent } from "../types/events.js";
 import { createDeferred, withTimeout } from "../utils/async.js";
 import { writeLog } from "../utils/log.js";
 import { isRecord } from "../utils/type-guards.js";
@@ -170,6 +169,9 @@ export class FeishuStreamComposer {
       pieces.push(event.text);
       this.answerParts.push(event.text);
     } else if (event.type === "tool_intent") {
+      // 工具轮旁白不计入最终回答，避免 turn_done 补发时重复拼接。
+      this.answerParts.length = 0;
+      delete this.phase;
       this.tools.push({ name: event.toolName, intent: event.intent });
     } else if (event.type === "turn_error") {
       pieces.push(`\n\n${event.message}`);

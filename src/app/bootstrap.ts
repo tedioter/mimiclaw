@@ -1,51 +1,23 @@
 import { Agent } from "../agent/agent.js";
-import { createAgentContext, type AgentContext } from "../agent/context.js";
-import { buildPromptContext } from "../agent/prompt.js";
 import { createAgentLoopControl, runAgentLoop } from "./agent-runner.js";
 import { MessageBus } from "../bus/message-bus.js";
 import { runShutdownSteps } from "../utils/shutdown.js";
 import { OpenAICompatibleModel } from "../model/openai-compatible.js";
-import type { Model } from "../model/index.js";
 import { DEFAULT_CONFIG_PATH, loadConfig, recentMemoryPath } from "../config/index.js";
 import type { AppConfig } from "../config/types.js";
 import { LongTermMemory } from "../memory/long-term-memory.js";
 import { Memory } from "../memory/memory.js";
 import { ShortTermMemory } from "../memory/short-term-memory.js";
-import type { McpToolHub } from "../mcp/hub.js";
 import { createToolRegistry } from "../tools/toolregistry.js";
 import type { ToolRegistry } from "../tools/toolregistry.js";
-import { MimiError, errorMessage, errorName } from "../types/errors.js";
-import type { InboundMessage } from "../types/events.js";
-import { commitTurn as commitConversationTurn } from "./turn-coordinator.js";
-import { buildTurnId } from "../utils/turn-id.js";
-import { summarizeLogText, writeLog } from "../utils/log.js";
-import {
-  CliAdapter,
-  FeishuAdapter,
-  QQAdapter,
-  type CliPlatformOptions,
-  type PlatformAdapter
-} from "../platforms/index.js";
+import { MimiError } from "../types/errors.js";
+import type { CliPlatformOptions, PlatformAdapter } from "../platforms/index.js";
+import { CliAdapter, FeishuAdapter, QQAdapter } from "../platforms/index.js";
 
 export type PlatformName = "qq" | "feishu" | "cli";
 
 export type ServeOptions = {
   cli?: CliPlatformOptions;
-};
-
-type PreparedAgentDependencies = {
-  memory: Memory;
-  registry: ToolRegistry;
-  hub?: McpToolHub;
-};
-
-type CreatedAgent = {
-  agent: Agent;
-  model: Model;
-  memory: Memory;
-  context: AgentContext;
-  bus: MessageBus;
-  hub?: McpToolHub;
 };
 
 export class AgentRuntime {
@@ -54,50 +26,8 @@ export class AgentRuntime {
   constructor(
     readonly config: AppConfig,
     readonly agent: Agent,
-    readonly model: Model,
-    readonly memory: Memory,
-    readonly context: AgentContext,
-    readonly bus: MessageBus,
-    readonly mcpHub?: McpToolHub
+    readonly bus: MessageBus
   ) {}
-
-  async commitTurn(inbound: InboundMessage, assistantReply: string): Promise<void> {
-    const turnId = buildTurnId(inbound);
-    try {
-      await commitConversationTurn(
-        this.config.memory,
-        this.model,
-        this.memory,
-        inbound,
-        assistantReply,
-        turnId
-      );
-    } catch (error) {
-      writeLog("error", "memory", {
-        turnId,
-        type: "memory_commit_error",
-        errorName: errorName(error),
-        content: summarizeLogText(errorMessage(error))
-      });
-    } finally {
-      this.refreshContext(turnId);
-    }
-  }
-
-  private refreshContext(turnId: string): void {
-    try {
-      const promptContext = buildPromptContext(this.memory);
-      this.context.prompt = promptContext.prompt;
-      this.context.messages = promptContext.messages;
-    } catch (error) {
-      writeLog("error", "memory", {
-        turnId,
-        type: "context_refresh_error",
-        errorName: errorName(error),
-        content: summarizeLogText(errorMessage(error))
-      });
-    }
-  }
 
   close(): Promise<void> {
     this.closePromise ??= this.closeResources();
@@ -111,9 +41,6 @@ export class AgentRuntime {
           this.bus.close();
         },
         async () => {
-          await this.mcpHub?.close();
-        },
-        async () => {
           await this.agent.close();
         }
       ],
@@ -122,52 +49,35 @@ export class AgentRuntime {
   }
 }
 
-async function prepare(config: AppConfig): Promise<PreparedAgentDependencies> {
+async function createMemoryAndTools(config: AppConfig): Promise<{
+  memory: Memory;
+  registry: ToolRegistry;
+}> {
   const memory = new Memory(
     new ShortTermMemory(recentMemoryPath(config.dataDir), config.memory.contextTurns),
-    new LongTermMemory(config.dataDir, config.memory.maxMemoryChars)
+    new LongTermMemory(config.dataDir, config.memory.maxMemoryChars),
+    {
+      compressBatch: config.memory.compressBatch,
+      compressContext: config.memory.compressContext
+    }
   );
-  const { registry, hub } = await createToolRegistry(config);
-  return { memory, registry, ...(hub ? { hub } : {}) };
-}
-
-async function createAgent(config: AppConfig): Promise<CreatedAgent> {
-  const dependencies = await prepare(config);
-  const bus = new MessageBus();
-  let model: OpenAICompatibleModel | undefined;
-  try {
-    model = new OpenAICompatibleModel(config.model);
-    const promptContext = buildPromptContext(dependencies.memory);
-    const context = createAgentContext(
-      promptContext.prompt,
-      promptContext.messages,
-      dependencies.registry
-    );
-    const agent = new Agent(model, context, {
-      display: config.display,
-      enableThinking: config.model.enableThinking
-    });
-    return {
-      agent,
-      model,
-      memory: dependencies.memory,
-      context,
-      bus,
-      ...(dependencies.hub ? { hub: dependencies.hub } : {})
-    };
-  } catch (error) {
-    await Promise.allSettled([
-      ...(dependencies.hub ? [dependencies.hub.close()] : []),
-      ...(model ? [model.close()] : [])
-    ]);
-    throw error;
-  }
+  const registry = await createToolRegistry(config);
+  return { memory, registry };
 }
 
 export async function loadRuntime(requireModelKey = true): Promise<AgentRuntime> {
   const config = loadConfig(DEFAULT_CONFIG_PATH, requireModelKey);
-  const { agent, model, memory, context, bus, hub } = await createAgent(config);
-  return new AgentRuntime(config, agent, model, memory, context, bus, hub);
+  const { memory, registry } = await createMemoryAndTools(config);
+  const bus = new MessageBus();
+  let model: OpenAICompatibleModel | undefined;
+  try {
+    model = new OpenAICompatibleModel(config.model);
+    const agent = new Agent(model, memory, registry);
+    return new AgentRuntime(config, agent, bus);
+  } catch (error) {
+    await Promise.allSettled([registry.close(), ...(model ? [model.close()] : [])]);
+    throw error;
+  }
 }
 
 function createAdapter(
@@ -215,7 +125,8 @@ export async function servePlatforms(
     runtime.agent,
     runtime.bus,
     loopControl,
-    (inbound, assistantReply) => runtime.commitTurn(inbound, assistantReply)
+    (inbound, assistantReply) => runtime.agent.handleTurnEnd(inbound, assistantReply),
+    runtime.config.display
   );
   const dispatchTask = runtime.bus.dispatchHandlers();
   let cliAdapter: CliAdapter | undefined;

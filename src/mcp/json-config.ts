@@ -61,6 +61,7 @@ export function parseMcpServerEntry(
   if (transport && !["stdio", "sse", "http"].includes(transport)) {
     throw new ConfigError(`${source}[${serverId}].transport 只能是 stdio、sse 或 http`);
   }
+  // sse 为旧配置别名，运行时与 http 一样走 Streamable HTTP。
   if (!transport) {
     if (url) {
       transport = "http";

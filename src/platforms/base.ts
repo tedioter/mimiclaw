@@ -1,4 +1,4 @@
-import type { OutboundMessage } from "../types/events.js";
+import type { OutboundMessage } from "../bus/message-bus.js";
 import { sleep } from "../utils/async.js";
 import { splitText } from "../utils/message-splitter.js";
 

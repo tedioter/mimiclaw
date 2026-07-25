@@ -1,5 +1,4 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
@@ -82,6 +81,13 @@ function formatConnectError(serverId: string, error: unknown): string {
   return `${serverId}: ${errorMessage(error)}`;
 }
 
+function createRemoteTransport(server: McpServerConfig): Transport {
+  // SDK 的 sessionId 与 exactOptionalPropertyTypes 下的 Transport 声明不完全一致。
+  return new StreamableHTTPClientTransport(new URL(server.url ?? ""), {
+    requestInit: server.headers ? { headers: { ...server.headers } } : {}
+  }) as Transport;
+}
+
 export class McpToolHub {
   private readonly clients = new Map<string, Client>();
   private readonly serverConfigs = new Map<string, McpServerConfig>();
@@ -136,15 +142,8 @@ export class McpToolHub {
           : {})
       });
     }
-    if (server.transport === "sse") {
-      return new SSEClientTransport(new URL(server.url ?? ""), {
-        requestInit: server.headers ? { headers: { ...server.headers } } : {}
-      });
-    }
-    // SDK 的 sessionId 可选属性在 exactOptionalPropertyTypes 下与其 Transport 接口不一致。
-    return new StreamableHTTPClientTransport(new URL(server.url ?? ""), {
-      requestInit: server.headers ? { headers: { ...server.headers } } : {}
-    }) as unknown as Transport;
+    // http 与 sse 均走 Streamable HTTP（MCP 现行远程传输）。
+    return createRemoteTransport(server);
   }
 
   private async establishClient(server: McpServerConfig, signal: AbortSignal): Promise<Client> {

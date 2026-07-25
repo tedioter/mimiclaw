@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { InboundMessage } from "../types/events.js";
+import type { InboundMessage } from "../bus/message-bus.js";
 
 const TURN_ID_HASH_LENGTH = 8;
 

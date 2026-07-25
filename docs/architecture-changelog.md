@@ -1,6 +1,14 @@
 # 架构迭代记录
 
-本文档用于记录项目架构的持续演进。每次重要架构调整新增一个带日期的章节，不追求记录所有普通代码修改。
+本文档记录**已提交**版本之间的架构演进，不记录进行中的未提交改动。
+
+## 记录规则
+
+- **一条记录对应一次 Git 提交**（或一组明确一起合并、且共同构成架构变更的提交）。
+- 每条章节描述的是**上一提交 → 当前提交**的架构差异，不是工作区里的临时状态。
+- 开发过程中不要提前写入尚未提交的章节；**在创建 Git 提交时**再新增或更新对应章节。
+- 普通 bug 修复、样式调整、测试补全若未改变模块职责、依赖关系、数据流或运行流程，不必记录。
+- 若某次提交撤销或改写了先前记录，在**新提交**中追加章节说明，不要静默改写旧章节的历史描述（旧章节应仍反映当时已提交的真相）。
 
 ## 2026-07-23：Agent 与 App 职责分离
 
@@ -90,18 +98,87 @@ App 提交一轮对话后，会重新读取记忆文件并更新同一个 `Agent
 
 运行时模型切换和思考程度切换暂未实现，当前只完成了后续扩展所需的 Agent 与 App 职责分离。
 
+## 2026-07-25：Agent 依赖 memory 派生上下文，MCP 归入工具层
+
+### 背景
+
+上一版通过 `AgentContext` 在 App 层缓存 prompt 与历史，并在提交后刷新同一对象。边界仍不够清晰：Agent 间接依赖 App 组装的上下文，MCP 生命周期散落在 Runtime，展示过滤混在 Agent 与平台之间。
+
+### 变更
+
+#### 1. Agent 只依赖 model、memory、tools
+
+之前：
+
+```ts
+new Agent(model, context, options);
+```
+
+现在：
+
+```ts
+new Agent(model, memory, tools);
+```
+
+- 删除 `src/agent/context.ts`（`AgentContext` 移除）。
+- 每轮 `runTurn` 开头调用 `buildPromptContext(memory)` 现读 prompt 与近期对话；`runTurn` 期间不写 memory。
+- 调试接口改为 `readPromptContext()`。
+
+#### 2. 轮次结束处理统一到 Agent 层
+
+- 删除 `src/app/turn-coordinator.ts`。
+- 新增 `src/agent/turn-end-handler.ts`，导出 `handleTurnEnd()`：先压缩短期记忆，再 append 当前轮。
+- `Agent.handleTurnEnd()` 为对外薄封装；`runAgentLoop` 在 `turn_done` 后调用。
+
+#### 3. Memory 承载压缩策略
+
+`Memory` 新增 `compression: { compressBatch, compressContext }`；上下文摘要标签统一为 `<recent_conversation_summary>`。
+
+#### 4. MCP 归入 ToolRegistry
+
+- `createToolRegistry()` 连接 MCP 并将代理工具并入同一注册表；`ToolRegistry.close()` 关闭 hub。
+- `AgentRuntime` 精简为 `{ config, agent, bus }`，不再暴露 memory、model、mcpHub。
+
+#### 5. 展示过滤与平台流式修正
+
+- `shouldPublishAgentEvent()` 与 `runAgentLoop(..., display?)` 在 App 层按配置过滤 thinking、tool_intent。
+- 飞书/QQ 流式：工具轮旁白不计入最终回答，避免 `turn_done` 补发重复。
+
+#### 6. 其他
+
+- `InboundMessage` / `OutboundMessage` 移至 `bus/message-bus.ts`。
+- MCP 远程传输统一 `StreamableHTTPClientTransport`；Zod 4 `looseObject` 替代 `passthrough`。
+- 工具失败日志附带完整参数便于排查。
+
+### 影响
+
+- 调用方：`commitTurn` 更名为 `handleTurnEnd`；不再存在 `AgentContext` 与 Runtime 上的 memory/model 访问。
+- 数据流：memory 为 prompt 唯一来源；下一轮自动读到最新长期记忆与压缩摘要。
+- 配置：`transport: sse` 仅为别名，运行时与 `http` 相同（Streamable HTTP）。
+
+### 暂未解决的问题
+
+- 运行时模型切换与 Anthropic 原生 API 适配仍未实现。
+- 仅支持旧版 HTTP+SSE、不支持 Streamable HTTP 的 MCP 服务可能无法连接。
+
 ## 后续记录格式
 
-后续架构迭代按以下结构追加：
+提交架构相关改动时，在**同一次 commit** 中追加章节，结构如下：
 
 ```markdown
 ## YYYY-MM-DD：迭代名称
 
 ### 背景
 
+（相对上一提交，为什么要改）
+
 ### 变更
 
+（模块职责、依赖、数据流、运行流程的具体差异）
+
 ### 影响
+
+（对调用方、测试、部署的影响）
 
 ### 暂未解决的问题
 ```

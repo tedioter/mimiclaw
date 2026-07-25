@@ -1,5 +1,20 @@
-import type { AgentEvent, InboundMessage } from "../types/events.js";
+import type { AgentEvent } from "../types/events.js";
 
+export type InboundMessage = {
+  platform: string;
+  text: string;
+  messageId?: string;
+};
+
+/** 平台发送的纯文本出站消息（分片、降级发送等）。 */
+export type OutboundMessage = {
+  platform: string;
+  text: string;
+  replyTo?: string;
+  final?: boolean;
+};
+
+/** Bus 上携带 Agent 事件的出站消息。 */
 export type BusOutboundMessage = {
   platform: string;
   event: AgentEvent;

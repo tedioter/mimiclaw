@@ -1,7 +1,6 @@
 import path from "node:path";
 import { z } from "zod";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { commitTurn } from "../src/app/turn-coordinator.js";
 import { LongTermMemory, Memory, ShortTermMemory } from "../src/memory/index.js";
 import { ToolRegistry } from "../src/tools/toolregistry.js";
 import { Tool } from "../src/tools/base.js";
@@ -11,7 +10,6 @@ import {
   FakeModel,
   cleanupTemporaryDirectories,
   createTestAgent,
-  makeConfig,
   temporaryDirectory,
   testTool
 } from "./test-helpers.js";
@@ -45,12 +43,7 @@ describe("Agent 工具循环", () => {
     const root = temporaryDirectory();
     const model = new FakeModel([]);
     const close = vi.spyOn(model, "close");
-    const agent = createTestAgent(
-      makeConfig(root),
-      model,
-      createMemory(root),
-      new ToolRegistry([])
-    );
+    const agent = createTestAgent(model, createMemory(root), new ToolRegistry([]));
 
     await Promise.all([agent.close(), agent.close()]);
     await agent.close();
@@ -61,9 +54,6 @@ describe("Agent 工具循环", () => {
   it("工具循环回传 reasoning_content 供思考模式下的后续请求", async () => {
     const root = temporaryDirectory();
     const arguments_ = JSON.stringify({ value: 1, intent: "执行计数" });
-    const config = makeConfig(root);
-    config.model.enableThinking = true;
-    config.display.showThinking = false;
     const model = new FakeModel([
       [
         { type: "model_thinking_delta", text: "需要先计数。" },
@@ -78,7 +68,7 @@ describe("Agent 工具循环", () => {
       [{ type: "model_text_delta", text: "已完成。" }]
     ]);
     const { tool } = createCountingTool();
-    const agent = createTestAgent(config, model, createMemory(root), new ToolRegistry([tool]));
+    const agent = createTestAgent(model, createMemory(root), new ToolRegistry([tool]));
 
     for await (const _event of agent.respond({ platform: "cli", text: "执行" })) {
       // 消费完整事件流
@@ -95,8 +85,6 @@ describe("Agent 工具循环", () => {
   it("思考为空时不传 reasoning_content 字段", async () => {
     const root = temporaryDirectory();
     const arguments_ = JSON.stringify({ value: 1, intent: "执行计数" });
-    const config = makeConfig(root);
-    config.model.enableThinking = true;
     const model = new FakeModel([
       [
         {
@@ -110,7 +98,7 @@ describe("Agent 工具循环", () => {
       [{ type: "model_text_delta", text: "已完成。" }]
     ]);
     const { tool } = createCountingTool();
-    const agent = createTestAgent(config, model, createMemory(root), new ToolRegistry([tool]));
+    const agent = createTestAgent(model, createMemory(root), new ToolRegistry([tool]));
 
     for await (const _event of agent.respond({ platform: "cli", text: "执行" })) {
       // 消费完整事件流
@@ -123,13 +111,13 @@ describe("Agent 工具循环", () => {
     expect(assistantMessage).not.toHaveProperty("reasoning_content");
   });
 
-  it("工具轮中间的 content 不展示给用户", async () => {
+  it("正文真正流式输出，工具轮旁白展示但不计入最终回复", async () => {
     const root = temporaryDirectory();
     const arguments_ = JSON.stringify({ path: "package.json", intent: "读取文件" });
-    const config = makeConfig(root);
     const model = new FakeModel([
       [
-        { type: "model_text_delta", text: "Let me analyze the fix." },
+        { type: "model_text_delta", text: "Let me " },
+        { type: "model_text_delta", text: "analyze the fix." },
         {
           type: "model_tool_call_delta",
           index: 0,
@@ -138,10 +126,12 @@ describe("Agent 工具循环", () => {
           arguments: arguments_
         }
       ],
-      [{ type: "model_text_delta", text: "修复已完成。" }]
+      [
+        { type: "model_text_delta", text: "修复" },
+        { type: "model_text_delta", text: "已完成。" }
+      ]
     ]);
     const agent = createTestAgent(
-      config,
       model,
       createMemory(root),
       new ToolRegistry([testTool("read", root)])
@@ -152,7 +142,8 @@ describe("Agent 工具循环", () => {
     }
     expect(
       events.filter((event) => event.type === "text_delta").map((event) => event.text)
-    ).toEqual(["修复已完成。"]);
+    ).toEqual(["Let me ", "analyze the fix.", "修复", "已完成。"]);
+    expect(events).toContainEqual({ type: "turn_done", text: "修复已完成。" });
     const assistantMessage = model.calls[1]?.find(
       (message) => message.role === "assistant" && message.tool_calls?.length
     );
@@ -183,8 +174,7 @@ describe("Agent 工具循环", () => {
     ]);
     const { tool, state } = createCountingTool();
     const memory = createMemory(root);
-    const config = makeConfig(root);
-    const agent = createTestAgent(config, model, memory, new ToolRegistry([tool]));
+    const agent = createTestAgent(model, memory, new ToolRegistry([tool]));
     const events = [];
     for await (const event of agent.respond({ platform: "cli", text: "执行" })) {
       events.push(event);
@@ -195,14 +185,7 @@ describe("Agent 工具循环", () => {
     if (!done) {
       throw new Error("测试轮次没有完成事件");
     }
-    await commitTurn(
-      config.memory,
-      model,
-      memory,
-      { platform: "cli", text: "执行" },
-      done.text,
-      buildTurnId({ platform: "cli" })
-    );
+    await agent.handleTurnEnd({ platform: "cli", text: "执行" }, done.text);
     expect(state.count).toBe(2);
     expect(events.filter((event) => event.type === "tool_intent")).toHaveLength(2);
     expect(memory.shortTerm.loadState().turns[0]?.assistant).toBe("已执行两次。");
@@ -231,7 +214,6 @@ describe("Agent 工具循环", () => {
       [{ type: "model_text_delta", text: "已处理失败信息。" }]
     ]);
     const agent = createTestAgent(
-      makeConfig(root),
       model,
       createMemory(root),
       new ToolRegistry([createCountingTool().tool])

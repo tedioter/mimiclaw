@@ -13,18 +13,17 @@
 
 1. 明确改动范围和影响的模块。
 2. 完成功能实现，并同步补充或调整测试。
-3. 如果改动影响模块职责、依赖关系、数据流或运行流程，更新 [`docs/architecture-changelog.md`](docs/architecture-changelog.md)。
-4. 在迭代记录中新增日期章节，说明背景、变更、影响和暂未解决的问题。
-5. 运行与改动相关的检查；常规情况下至少运行：
+3. 运行与改动相关的检查；常规情况下至少运行：
    - `npm run typecheck`
    - `npm test`
    - `npm run format:check`
    - `npm run build`
-6. 检查 `git diff`、`git diff --check` 和 `git status`，确认没有误提交的配置、密钥或无关文件。
-7. 验证通过后直接创建 Git 提交，提交信息使用清晰的 Conventional Commits 风格，例如 `feat:`、`fix:`、`refactor:` 或 `docs:`。
+4. 检查 `git diff`、`git diff --check` 和 `git status`，确认没有误提交的配置、密钥或无关文件。
+5. 验证通过后创建 Git 提交。若本次提交改变了模块职责、依赖关系、数据流或运行流程，**在同一次 commit 中**更新 [`docs/architecture-changelog.md`](docs/architecture-changelog.md)：新增一章，写清**相对上一提交**的架构差异；开发过程中不要提前写入未提交章节。
+6. 提交信息使用清晰的 Conventional Commits 风格，例如 `feat:`、`fix:`、`refactor:` 或 `docs:`。
 
 ## Agent 相关边界
 
-- `Agent` 只负责在给定 `AgentContext` 中完成一轮对话。
-- 记忆提交、上下文压缩和上下文刷新由 App 层负责。
-- Agent、App 或上下文边界发生变化时，必须更新架构迭代记录。
+- `Agent` 只依赖 `model`、`memory`、`tools`；prompt 与近期对话由 `memory` 在运行时派生。
+- 记忆提交、上下文压缩在 `Agent.handleTurnEnd()` 内完成；`AgentRuntime` 只负责总线、平台与 MCP 生命周期。
+- Agent、App 或上下文边界发生变化时，必须在**对应 Git 提交**中更新架构迭代记录，且只描述该提交相对上一提交的差异。

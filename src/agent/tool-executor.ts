@@ -14,6 +14,15 @@ function limitToolResult(result: string): string {
   return `${result.slice(0, MAX_TOOL_RESULT_CHARS)}\n\n[工具结果已截断，原长 ${result.length} 字符]`;
 }
 
+/** 失败日志附带完整工具参数，便于排查。 */
+function toolFailureLogContext(call: ToolCall, rawArguments?: string): Record<string, unknown> {
+  const context: Record<string, unknown> = { arguments: call.arguments };
+  if (rawArguments !== undefined) {
+    context.rawArguments = rawArguments;
+  }
+  return context;
+}
+
 export function formatToolIntent(call: ToolCall): string {
   const fallback = `执行工具：${call.name}`;
   const intent = String(call.arguments.intent ?? fallback)
@@ -64,7 +73,8 @@ export async function executeToolCall(
   tools: ToolRegistry,
   call: ToolCall,
   turnId: string,
-  argumentError?: string
+  argumentError?: string,
+  rawArguments?: string
 ): Promise<string> {
   const toolName = call.name || "未知工具";
   writeLog("info", "assistant", {
@@ -82,16 +92,17 @@ export async function executeToolCall(
       type: "tool_resolution_error",
       callId: call.callId,
       tool: toolName,
-      content: error
+      content: error,
+      ...toolFailureLogContext(call, rawArguments)
     });
     return error;
   }
   if (argumentError) {
-    return logArgumentError(turnId, call, toolName, argumentError);
+    return logArgumentError(turnId, call, toolName, argumentError, rawArguments);
   }
   const parsed = parseToolArguments(tool, call.arguments);
   if (!parsed.success) {
-    return logArgumentError(turnId, call, toolName, parsed.error);
+    return logArgumentError(turnId, call, toolName, parsed.error, rawArguments);
   }
   const arguments_ = Object.fromEntries(
     Object.entries(parsed.data).filter(([key]) => key !== "intent")
@@ -104,7 +115,8 @@ export async function executeToolCall(
       type: failed ? "tool_result_error" : "tool_result",
       callId: call.callId,
       tool: toolName,
-      content: failed ? result : summarizeLogText(result)
+      content: failed ? result : summarizeLogText(result),
+      ...(failed ? toolFailureLogContext(call, rawArguments) : {})
     });
     return limitToolResult(result);
   } catch (error) {
@@ -113,19 +125,27 @@ export async function executeToolCall(
       type: "tool_execution_error",
       callId: call.callId,
       tool: toolName,
+      ...toolFailureLogContext(call, rawArguments),
       ...formatErrorForLog(error)
     });
     return `工具执行失败：${errorMessage(error)}`;
   }
 }
 
-function logArgumentError(turnId: string, call: ToolCall, toolName: string, error: string): string {
+function logArgumentError(
+  turnId: string,
+  call: ToolCall,
+  toolName: string,
+  error: string,
+  rawArguments?: string
+): string {
   writeLog("error", "tool", {
     turnId,
     type: "tool_argument_error",
     callId: call.callId,
     tool: toolName,
-    content: error
+    content: error,
+    ...toolFailureLogContext(call, rawArguments)
   });
   return `工具参数无效：${error}`;
 }

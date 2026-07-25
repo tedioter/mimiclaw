@@ -1,16 +1,17 @@
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Agent } from "../src/agent/agent.js";
-import { commitTurn } from "../src/app/turn-coordinator.js";
-import { createAgentContext } from "../src/agent/context.js";
-import { buildPromptContext } from "../src/agent/prompt.js";
 import { AgentRuntime } from "../src/app/bootstrap.js";
 import { MessageBus } from "../src/bus/message-bus.js";
 import type { Model, ModelEvent, ModelMessage } from "../src/model/index.js";
 import { MemoryStoreError } from "../src/types/errors.js";
 import type { AgentEvent } from "../src/types/events.js";
-import { LongTermMemory, Memory, ShortTermMemory } from "../src/memory/index.js";
-import { buildTurnId } from "../src/utils/turn-id.js";
+import {
+  LongTermMemory,
+  Memory,
+  ShortTermMemory,
+  type MemoryCompression
+} from "../src/memory/index.js";
 import { ToolRegistry } from "../src/tools/index.js";
 import {
   cleanupTemporaryDirectories,
@@ -22,10 +23,15 @@ import {
 
 afterEach(cleanupTemporaryDirectories);
 
-function createMemory(root: string, maxTurns = 3): Memory {
+function createMemory(
+  root: string,
+  maxTurns = 3,
+  compression: MemoryCompression = { compressBatch: 1, compressContext: false }
+): Memory {
   return new Memory(
     new ShortTermMemory(path.join(root, "data", "recent.json"), maxTurns),
-    new LongTermMemory(path.join(root, "data"))
+    new LongTermMemory(path.join(root, "data")),
+    compression
   );
 }
 
@@ -66,21 +72,14 @@ async function consumeTurn(agent: Agent, text: string): Promise<AgentEvent[]> {
   return events;
 }
 
-async function commitConsumedTurn(
-  config: ReturnType<typeof makeConfig>,
-  model: Model,
-  memory: Memory,
-  text: string,
-  events: AgentEvent[]
-): Promise<void> {
+async function commitConsumedTurn(agent: Agent, text: string, events: AgentEvent[]): Promise<void> {
   const done = events.find(
     (event): event is Extract<AgentEvent, { type: "turn_done" }> => event.type === "turn_done"
   );
   if (!done) {
     throw new Error("测试轮次没有完成事件");
   }
-  const inbound = { platform: "cli", text };
-  await commitTurn(config.memory, model, memory, inbound, done.text, buildTurnId(inbound));
+  await agent.handleTurnEnd({ platform: "cli", text }, done.text);
 }
 
 function readErrorLogs(spy: ReturnType<typeof vi.spyOn>): Record<string, unknown>[] {
@@ -97,14 +96,14 @@ describe("Agent 记忆", () => {
       turns: []
     });
     const model = new FakeModel([[{ type: "model_text_delta", text: "已读取。" }]]);
-    const agent = createTestAgent(makeConfig(root), model, memory, new ToolRegistry([]));
+    const agent = createTestAgent(model, memory, new ToolRegistry([]));
 
     await consumeTurn(agent, "读取记忆");
 
     const systemPrompt = String(model.calls[0]?.[0]?.content);
     expect(systemPrompt).toContain("已确认的信息");
     expect(systemPrompt).toContain("之前讨论过工作区路径");
-    expect(systemPrompt).toContain("<context_summary>");
+    expect(systemPrompt).toContain("<recent_conversation_summary>");
   });
 
   it("App 提交轮次后刷新 prompt 和对话历史", async () => {
@@ -112,21 +111,15 @@ describe("Agent 记忆", () => {
     const config = makeConfig(root);
     const model = new FakeModel([[{ type: "model_text_delta", text: "下一轮回复" }]]);
     const memory = createMemory(root);
-    const tools = new ToolRegistry([]);
-    const promptContext = buildPromptContext(memory);
-    const context = createAgentContext(promptContext.prompt, promptContext.messages, tools);
-    const agent = new Agent(model, context, {
-      display: config.display,
-      enableThinking: config.model.enableThinking
-    });
-    const runtime = new AgentRuntime(config, agent, model, memory, context, new MessageBus());
+    const agent = createTestAgent(model, memory, new ToolRegistry([]));
+    const runtime = new AgentRuntime(config, agent, new MessageBus());
 
     try {
       await memory.longTerm.replaceMemory("更新后的记忆");
-      await runtime.commitTurn({ platform: "cli", text: "当前问题" }, "当前回答");
+      await agent.handleTurnEnd({ platform: "cli", text: "当前问题" }, "当前回答");
 
-      expect(context.prompt).toContain("更新后的记忆");
-      expect(context.messages).toEqual(
+      expect(agent.readPromptContext().prompt).toContain("更新后的记忆");
+      expect(agent.readPromptContext().messages).toEqual(
         expect.arrayContaining([
           { role: "user", content: "当前问题" },
           { role: "assistant", content: "当前回答" }
@@ -142,23 +135,19 @@ describe("Agent 记忆", () => {
 
   it("记录上下文压缩错误并继续提交当前轮次", async () => {
     const root = temporaryDirectory();
-    const config = makeConfig(root);
-    config.memory = {
-      ...config.memory,
+    const memory = createMemory(root, 2, {
       compressContext: true,
-      contextTurns: 2,
       compressBatch: 1
-    };
-    const memory = createMemory(root, 2);
+    });
     await memory.shortTerm.append("旧问题一", "旧回答一", "cli");
     await memory.shortTerm.append("旧问题二", "旧回答二", "cli");
     const model = new FailingFollowUpModel("压缩器暂时不可用");
-    const agent = createTestAgent(config, model, memory, new ToolRegistry([]));
+    const agent = createTestAgent(model, memory, new ToolRegistry([]));
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
 
     try {
       const events = await consumeTurn(agent, "当前问题");
-      await commitConsumedTurn(config, model, memory, "当前问题", events);
+      await commitConsumedTurn(agent, "当前问题", events);
 
       expect(readErrorLogs(errors)).toContainEqual(
         expect.objectContaining({
@@ -175,21 +164,17 @@ describe("Agent 记忆", () => {
 
   it("压缩器返回空内容时保留原有近期记忆", async () => {
     const root = temporaryDirectory();
-    const config = makeConfig(root);
-    config.memory = {
-      ...config.memory,
+    const memory = createMemory(root, 3, {
       compressContext: true,
-      contextTurns: 2,
       compressBatch: 1
-    };
-    const memory = createMemory(root, 3);
+    });
     await memory.shortTerm.append("旧问题一", "旧回答一", "cli");
     await memory.shortTerm.append("旧问题二", "旧回答二", "cli");
     const model = new EmptyFollowUpModel();
-    const agent = createTestAgent(config, model, memory, new ToolRegistry([]));
+    const agent = createTestAgent(model, memory, new ToolRegistry([]));
 
     const events = await consumeTurn(agent, "当前问题");
-    await commitConsumedTurn(config, model, memory, "当前问题", events);
+    await commitConsumedTurn(agent, "当前问题", events);
 
     expect(memory.shortTerm.loadState().turns.map((turn) => turn.user)).toEqual([
       "旧问题一",
@@ -200,14 +185,10 @@ describe("Agent 记忆", () => {
 
   it("达到窗口上限时压缩最早的一半对话", async () => {
     const root = temporaryDirectory();
-    const config = makeConfig(root);
-    config.memory = {
-      ...config.memory,
-      contextTurns: 4,
-      compressBatch: 2,
-      compressContext: true
-    };
-    const memory = createMemory(root, 4);
+    const memory = createMemory(root, 4, {
+      compressContext: true,
+      compressBatch: 2
+    });
     await memory.shortTerm.append("旧问题一", "旧回答一", "cli");
     await memory.shortTerm.append("旧问题二", "旧回答二", "cli");
     await memory.shortTerm.append("旧问题三", "旧回答三", "cli");
@@ -216,10 +197,10 @@ describe("Agent 记忆", () => {
       [{ type: "model_text_delta", text: "最终回答" }],
       [{ type: "model_text_delta", text: "压缩摘要" }]
     ]);
-    const agent = createTestAgent(config, model, memory, new ToolRegistry([]));
+    const agent = createTestAgent(model, memory, new ToolRegistry([]));
 
     const events = await consumeTurn(agent, "当前问题");
-    await commitConsumedTurn(config, model, memory, "当前问题", events);
+    await commitConsumedTurn(agent, "当前问题", events);
 
     expect(memory.shortTerm.loadState()).toMatchObject({
       summary: "压缩摘要",
@@ -244,17 +225,8 @@ describe("Agent 记忆", () => {
     vi.spyOn(memory.shortTerm, "append").mockRejectedValue(
       new MemoryStoreError("模拟记忆写入失败")
     );
-    const promptContext = buildPromptContext(memory);
-    const context = createAgentContext(
-      promptContext.prompt,
-      promptContext.messages,
-      new ToolRegistry([])
-    );
-    const agent = new Agent(model, context, {
-      display: config.display,
-      enableThinking: config.model.enableThinking
-    });
-    const runtime = new AgentRuntime(config, agent, model, memory, context, new MessageBus());
+    const agent = createTestAgent(model, memory, new ToolRegistry([]));
+    const runtime = new AgentRuntime(config, agent, new MessageBus());
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
 
     try {
@@ -267,7 +239,7 @@ describe("Agent 记忆", () => {
       if (!done) {
         throw new Error("测试轮次没有完成事件");
       }
-      await runtime.commitTurn({ platform: "cli", text: "测试记忆故障" }, done.text);
+      await agent.handleTurnEnd({ platform: "cli", text: "测试记忆故障" }, done.text);
       expect(readErrorLogs(errors)).toContainEqual(
         expect.objectContaining({ type: "memory_commit_error", errorName: "MemoryStoreError" })
       );

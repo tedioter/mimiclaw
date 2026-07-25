@@ -15,11 +15,6 @@ import { RememberTool } from "./remember.js";
 import { WebFetchTool } from "./web-fetch.js";
 import { WriteTool } from "./write.js";
 
-type CreatedToolRegistry = {
-  registry: ToolRegistry;
-  hub?: McpToolHub;
-};
-
 function buildToolSchema(tool: Tool): DeclaredToolSchema {
   const baseSchema =
     tool.parameters ?? (toJSONSchema(tool.schema as never) as Record<string, unknown>);
@@ -48,7 +43,10 @@ export class ToolRegistry {
   private readonly tools: Map<string, Tool>;
   private readonly toolSchemas: DeclaredToolSchema[];
 
-  constructor(tools: Tool[]) {
+  constructor(
+    tools: Tool[],
+    private readonly mcpHub?: McpToolHub
+  ) {
     this.tools = new Map();
     for (const tool of tools) {
       if (!tool.name.trim()) {
@@ -70,6 +68,10 @@ export class ToolRegistry {
   get(name: string): Tool | undefined {
     return this.tools.get(name);
   }
+
+  async close(): Promise<void> {
+    await this.mcpHub?.close();
+  }
 }
 
 /** 根据配置组装全部内置工具。新增工具：import class + 在数组中加一行 new。 */
@@ -88,10 +90,10 @@ export function createTools(config: AppConfig): Tool[] {
 }
 
 /** 组装内置工具，并按需连接 MCP。 */
-export async function createToolRegistry(config: AppConfig): Promise<CreatedToolRegistry> {
+export async function createToolRegistry(config: AppConfig): Promise<ToolRegistry> {
   const tools = createTools(config);
   if (!config.mcp.enabled || !config.mcp.servers.length) {
-    return { registry: new ToolRegistry(tools) };
+    return new ToolRegistry(tools);
   }
   const hub = new McpToolHub(config.mcp.callTimeoutSeconds, config.mcp.connectTimeoutSeconds);
   const { tools: mcpTools, errors } = await hub.connect(config.mcp.servers);
@@ -99,5 +101,5 @@ export async function createToolRegistry(config: AppConfig): Promise<CreatedTool
     writeLog("error", "system", { type: "mcp_connect_error", content: error });
   }
   tools.push(...mcpTools);
-  return { registry: new ToolRegistry(tools), hub };
+  return new ToolRegistry(tools, hub);
 }

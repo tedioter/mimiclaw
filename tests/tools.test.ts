@@ -310,7 +310,13 @@ describe("工具日志", () => {
       .find((entry) => entry.type === "tool_result_error");
     const throwLog = error.mock.calls
       .map(
-        ([line]) => JSON.parse(String(line)) as { type?: string; content?: string; stack?: string }
+        ([line]) =>
+          JSON.parse(String(line)) as {
+            type?: string;
+            content?: string;
+            stack?: string;
+            arguments?: Record<string, unknown>;
+          }
       )
       .find((entry) => entry.type === "tool_execution_error");
 
@@ -318,8 +324,45 @@ describe("工具日志", () => {
     expect(failLog?.content).toBe(`工具执行失败：${longText}`);
     expect(throwLog?.content).toBe(longText);
     expect(throwLog?.stack).toBeTruthy();
+    expect(throwLog?.arguments).toEqual({ mode: "throw", intent: "测试" });
 
     info.mockRestore();
     error.mockRestore();
+  });
+
+  it("失败日志记录工具参数，成功调用日志仍不记录参数", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+
+    try {
+      await executeToolCall(
+        new ToolRegistry([testTool("read", temporaryDirectory())]),
+        {
+          callId: "read_fail",
+          name: "read",
+          arguments: { path: "../outside.txt", intent: "读取文件" }
+        },
+        "turn-2"
+      );
+
+      const errorLogs = errors.mock.calls.map(
+        ([line]) => JSON.parse(String(line)) as Record<string, unknown>
+      );
+      const executionError = errorLogs.find((entry) => entry.type === "tool_execution_error");
+      expect(executionError?.arguments).toEqual({
+        path: "../outside.txt",
+        intent: "读取文件"
+      });
+
+      const toolCallLogs = info.mock.calls.map(
+        ([line]) => JSON.parse(String(line)) as Record<string, unknown>
+      );
+      expect(toolCallLogs.find((entry) => entry.type === "tool_call")).not.toHaveProperty(
+        "arguments"
+      );
+    } finally {
+      errors.mockRestore();
+      info.mockRestore();
+    }
   });
 });

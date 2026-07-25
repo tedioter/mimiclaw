@@ -3,7 +3,8 @@ import { createAgentLoopControl, runAgentLoop } from "../src/app/agent-runner.js
 import { MessageBus } from "../src/bus/message-bus.js";
 import { MessageDeduper, finalAnswerSuffix } from "../src/platforms/base.js";
 import { FeishuCardBuffer, FeishuStreamComposer } from "../src/platforms/feishu.js";
-import type { AgentEvent, InboundMessage } from "../src/types/events.js";
+import type { InboundMessage } from "../src/bus/message-bus.js";
+import type { AgentEvent } from "../src/types/events.js";
 import { createDeferred } from "../src/utils/async.js";
 import { splitText } from "../src/utils/message-splitter.js";
 import {
@@ -161,6 +162,19 @@ describe("平台通用行为", () => {
     composer.consume({ type: "turn_done", text: "最终回答" });
     expect(composer.text).toBe("最终回答");
   });
+
+  it("飞书工具轮旁白展示但不计入最终回答补发", () => {
+    const composer = new FeishuStreamComposer();
+    composer.consume({ type: "text_delta", text: "先查一下。" });
+    composer.consume({ type: "tool_intent", toolName: "read", intent: "读取文件" });
+    composer.consume({ type: "text_delta", text: "查完了。" });
+    composer.consume({ type: "turn_done", text: "查完了。" });
+    expect(composer.parts.join("")).toBe("先查一下。查完了。");
+    expect(composer.answerParts.join("")).toBe("查完了。");
+    expect(composer.text).toContain("先查一下。");
+    expect(composer.text).toContain("查完了。");
+    expect(composer.text).not.toContain("**最终回答**");
+  });
 });
 
 class FakeQQClient implements QQClientLike {
@@ -235,14 +249,16 @@ describe("QQ 官方 SDK 适配", () => {
       yield { type: "text_delta", text: longText };
       yield { type: "tool_intent", toolName: "read", intent: "读取文件" };
       yield { type: "text_delta", text: "最终回答" };
-      yield { type: "turn_done", text: `${longText}最终回答` };
+      yield { type: "turn_done", text: "最终回答" };
     });
     expect(client.sent).toHaveLength(0);
     expect(client.streams.length).toBeGreaterThan(0);
     expect(client.streams.every((stream) => stream.completed)).toBe(true);
     const updates = client.streams.flatMap((stream) => stream.updates);
     expect(updates.some((text) => text.includes("> 工具调用：read：读取文件"))).toBe(true);
+    expect(updates.some((text) => text.includes(longText))).toBe(true);
     expect(updates.at(-1)).toContain("最终回答");
+    expect(updates.at(-1)).not.toContain("**最终回答**");
   });
 
   it("思考内容使用独立样式展示", async () => {

@@ -15,7 +15,10 @@ function buildSystemPrompt(
     `<long_term_memory>\n${memory}\n</long_term_memory>`
   ];
   if (contextSummary.trim()) {
-    systemPrompt.push(`<context_summary>\n${contextSummary.trim()}\n</context_summary>`);
+    systemPrompt.push(
+      "以下是对已移出近期对话窗口的旧轮次摘要；完整近期轮次在 messages 中：",
+      `<recent_conversation_summary>\n${contextSummary.trim()}\n</recent_conversation_summary>`
+    );
   }
   systemPrompt.push(
     [

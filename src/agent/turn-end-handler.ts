@@ -1,6 +1,5 @@
-import type { MemoryConfig } from "../config/types.js";
 import { errorMessage, errorName } from "../types/errors.js";
-import type { InboundMessage } from "../types/events.js";
+import type { InboundMessage } from "../bus/message-bus.js";
 import {
   buildContextCompressionMessages,
   parseContextCompressionResult
@@ -24,19 +23,19 @@ async function collectModelText(model: Model, messages: ModelMessage[]): Promise
 }
 
 async function compressContextIfNeeded(
-  config: MemoryConfig,
   model: Model,
   memory: Memory,
   turnId: string
 ): Promise<void> {
-  if (!config.compressContext) {
+  if (!memory.compression.compressContext) {
     return;
   }
+  const contextTurns = memory.shortTerm.maxTurns;
   let state = memory.shortTerm.loadState();
   let changed = false;
   try {
-    while (state.turns.length >= config.contextTurns) {
-      const batchSize = Math.min(config.compressBatch, state.turns.length);
+    while (state.turns.length >= contextTurns) {
+      const batchSize = Math.min(memory.compression.compressBatch, state.turns.length);
       if (batchSize <= 0) {
         break;
       }
@@ -65,14 +64,13 @@ async function compressContextIfNeeded(
   }
 }
 
-export async function commitTurn(
-  config: MemoryConfig,
+export async function handleTurnEnd(
   model: Model,
   memory: Memory,
   inbound: InboundMessage,
   assistantReply: string,
   turnId: string
 ): Promise<void> {
-  await compressContextIfNeeded(config, model, memory, turnId);
+  await compressContextIfNeeded(model, memory, turnId);
   await memory.shortTerm.append(inbound.text, assistantReply, inbound.platform);
 }
