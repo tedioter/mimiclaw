@@ -37,3 +37,7 @@ export function workspacePath(value: unknown): string {
 export function recentMemoryPath(dataDir: string): string {
   return path.join(dataDir, "recent.json");
 }
+
+export function runtimeLogPath(dataDir: string): string {
+  return path.join(dataDir, "runtime.log");
+}

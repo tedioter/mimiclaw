@@ -6,7 +6,7 @@ import {
 } from "@tencent-connect/qqbot-nodejs";
 import type { MessageBus, OutboundMessage } from "../bus/message-bus.js";
 import type { QQConfig } from "../config/types.js";
-import { ConfigError, PlatformError, errorMessage, errorName } from "../types/errors.js";
+import { ConfigError, MimiError, PlatformError, errorMessage, errorName } from "../types/errors.js";
 import type { AgentEvent } from "../types/events.js";
 import { createDeferred, withTimeout } from "../utils/async.js";
 import { writeLog } from "../utils/log.js";
@@ -19,6 +19,7 @@ import {
   isActorAllowed,
   type PlatformTextMessage
 } from "./base.js";
+import type { ModelControl, ModelInfo } from "./model-control.js";
 
 export type QQInboundMessage = {
   kind: "c2c" | "group" | "guild" | "dm";
@@ -367,13 +368,16 @@ export class QQAdapter extends PlatformAdapter {
   private stopping = false;
   private unregisterHandler?: () => void;
   private readonly sendContexts = new Map<string, QQSendContext>();
+  private readonly modelControl: ModelControl | undefined;
 
   constructor(
     private readonly bus: MessageBus,
     readonly config: QQConfig,
-    client?: QQClientLike
+    client?: QQClientLike,
+    modelControl?: ModelControl
   ) {
     super();
+    this.modelControl = modelControl;
     if (client) {
       this.client = client;
     }
@@ -422,6 +426,11 @@ export class QQAdapter extends PlatformAdapter {
     if (!text || !client || !message.messageId) {
       return;
     }
+    const modelCommand = this.parseModelCommand(text);
+    if (modelCommand) {
+      await this.handleModelCommand(client, message.replyTarget, modelCommand);
+      return;
+    }
 
     const streamSender = new QQSdkStreamSender(
       client,
@@ -454,6 +463,109 @@ export class QQAdapter extends PlatformAdapter {
       text,
       messageId: message.messageId
     });
+  }
+
+  private parseModelCommand(text: string): string[] | undefined {
+    const parts = text.split(/\s+/);
+    const command = parts[0]?.toLowerCase();
+    if (command !== "/model") {
+      return undefined;
+    }
+    return parts.slice(1);
+  }
+
+  private async handleModelCommand(
+    client: QQClientLike,
+    replyTarget: ReplyTarget,
+    args: string[]
+  ): Promise<void> {
+    const modelControl = this.modelControl;
+    if (!modelControl) {
+      await this.sendModelCommandReply(client, replyTarget, "当前未启用模型切换功能。");
+      return;
+    }
+
+    const models = modelControl.listModels();
+    const first = args[0]?.toLowerCase();
+    if (!first || first === "list") {
+      await this.sendModelCommandReply(client, replyTarget, this.formatModelList(models));
+      return;
+    }
+
+    let id = args[0];
+    if (first === "use" || first === "switch") {
+      id = args[1];
+    }
+    if (!id) {
+      await this.sendModelCommandReply(
+        client,
+        replyTarget,
+        "用法：/model [list] | /model <id> | /model switch <id>"
+      );
+      return;
+    }
+    if (/^\d+$/.test(id)) {
+      const selected = models[Number(id) - 1];
+      if (!selected) {
+        await this.sendModelCommandReply(
+          client,
+          replyTarget,
+          `无效序号：${id}，当前共 ${models.length} 个模型 runtime。`
+        );
+        return;
+      }
+      id = selected.id;
+    }
+
+    try {
+      modelControl.switchModel(id);
+      const active = modelControl.listModels().find((item) => item.active);
+      await this.sendModelCommandReply(
+        client,
+        replyTarget,
+        `已切换为 ${active?.id ?? id}（${active?.model ?? id}），下一条私聊消息生效。`
+      );
+    } catch (error) {
+      const knownIds = models.map((item) => item.id).join("、");
+      const reason = error instanceof MimiError ? error.message : "切换模型失败";
+      await this.sendModelCommandReply(client, replyTarget, `${reason}（可用：${knownIds}）`);
+    }
+  }
+
+  private formatModelList(models: ModelInfo[]): string {
+    if (!models.length) {
+      return "当前未配置模型 runtime。";
+    }
+    const lines = models.map((item) => {
+      const marker = item.active ? "* " : "  ";
+      return `${marker}${item.id}: ${item.model} (${item.baseUrl})`;
+    });
+    return `当前模型：\n${lines.join("\n")}\n\n切换用法：/model <id>`;
+  }
+
+  private async sendModelCommandReply(
+    client: QQClientLike,
+    replyTarget: ReplyTarget,
+    text: string
+  ): Promise<void> {
+    try {
+      await PlatformAdapter.sendPlatformText(
+        (outbound) =>
+          QQAdapter.sendWithRetry(
+            (current) => client.sendMessage(replyTarget, current),
+            outbound.text
+          ),
+        { platform: this.name, text },
+        this.config.maxMessageLength
+      );
+    } catch (error) {
+      writeLog("error", "platform", {
+        platform: this.name,
+        type: "qq_model_command_error",
+        errorName: errorName(error),
+        content: errorMessage(error)
+      });
+    }
   }
 
   private async handleOutbound(message: OutboundMessage): Promise<void> {

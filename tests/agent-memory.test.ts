@@ -19,7 +19,9 @@ import {
   createTestAgent,
   FakeModel,
   makeConfig,
-  temporaryDirectory
+  readLogFile,
+  temporaryDirectory,
+  useTestLogFile
 } from "./test-helpers.js";
 
 afterEach(cleanupTemporaryDirectories);
@@ -83,8 +85,8 @@ async function commitConsumedTurn(agent: Agent, text: string, events: AgentEvent
   await agent.handleTurnDone({ platform: "cli", text }, done.text);
 }
 
-function readErrorLogs(spy: ReturnType<typeof vi.spyOn>): Record<string, unknown>[] {
-  return spy.mock.calls.map(([line]) => JSON.parse(String(line)) as Record<string, unknown>);
+function readErrorLogs(logPath: string): Record<string, unknown>[] {
+  return readLogFile(logPath).filter((entry) => entry.level === "error");
 }
 
 describe("Agent 记忆", () => {
@@ -144,24 +146,20 @@ describe("Agent 记忆", () => {
     await memory.shortTerm.append("旧问题一", "旧回答一", "cli");
     await memory.shortTerm.append("旧问题二", "旧回答二", "cli");
     const model = new FailingFollowUpModel("压缩器暂时不可用");
+    const logPath = useTestLogFile(root);
     const agent = createTestAgent(model, memory, new ToolRegistry([]));
-    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    try {
-      const events = await consumeTurn(agent, "当前问题");
-      await commitConsumedTurn(agent, "当前问题", events);
+    const events = await consumeTurn(agent, "当前问题");
+    await commitConsumedTurn(agent, "当前问题", events);
 
-      expect(readErrorLogs(errors)).toContainEqual(
-        expect.objectContaining({
-          type: "context_compression_error",
-          errorName: "Error",
-          content: "压缩器暂时不可用"
-        })
-      );
-      expect(memory.shortTerm.loadState().turns.at(-1)?.user).toBe("当前问题");
-    } finally {
-      errors.mockRestore();
-    }
+    expect(readErrorLogs(logPath)).toContainEqual(
+      expect.objectContaining({
+        type: "context_compression_error",
+        errorName: "Error",
+        content: "压缩器暂时不可用"
+      })
+    );
+    expect(memory.shortTerm.loadState().turns.at(-1)?.user).toBe("当前问题");
   });
 
   it("压缩器返回空内容时保留原有近期记忆", async () => {
@@ -229,26 +227,22 @@ describe("Agent 记忆", () => {
     );
     const agent = createTestAgent(model, memory, new ToolRegistry([]));
     const runtime = new AgentRuntime(config, agent, new MessageBus());
-    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const logPath = useTestLogFile(root);
 
-    try {
-      const events = await consumeTurn(agent, "测试记忆故障");
-      expect(events).toContainEqual({ type: "turn_done", text: "仍可回复" });
-      expect(events.some((event) => event.type === "turn_error")).toBe(false);
-      const done = events.find(
-        (event): event is Extract<AgentEvent, { type: "turn_done" }> => event.type === "turn_done"
-      );
-      if (!done) {
-        throw new Error("测试轮次没有完成事件");
-      }
-      await agent.handleTurnDone({ platform: "cli", text: "测试记忆故障" }, done.text);
-      expect(readErrorLogs(errors)).toContainEqual(
-        expect.objectContaining({ type: "memory_commit_error", errorName: "MemoryStoreError" })
-      );
-      expect(memory.shortTerm.loadState().turns).toHaveLength(0);
-    } finally {
-      errors.mockRestore();
-      await runtime.close();
+    const events = await consumeTurn(agent, "测试记忆故障");
+    expect(events).toContainEqual({ type: "turn_done", text: "仍可回复" });
+    expect(events.some((event) => event.type === "turn_error")).toBe(false);
+    const done = events.find(
+      (event): event is Extract<AgentEvent, { type: "turn_done" }> => event.type === "turn_done"
+    );
+    if (!done) {
+      throw new Error("测试轮次没有完成事件");
     }
+    await agent.handleTurnDone({ platform: "cli", text: "测试记忆故障" }, done.text);
+    expect(readErrorLogs(logPath)).toContainEqual(
+      expect.objectContaining({ type: "memory_commit_error", errorName: "MemoryStoreError" })
+    );
+    expect(memory.shortTerm.loadState().turns).toHaveLength(0);
+    await runtime.close();
   });
 });

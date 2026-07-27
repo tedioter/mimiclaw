@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { loadConfig, workspacePath } from "../src/config/index.js";
+import { loadConfig, getActiveModelConfig, workspacePath } from "../src/config/index.js";
 import { ConfigError } from "../src/types/errors.js";
 import { cleanupTemporaryDirectories, temporaryDirectory } from "./test-helpers.js";
 
@@ -28,7 +28,8 @@ describe("配置解析", () => {
   it("读取基础配置和默认值", () => {
     const file = writeConfig();
     const config = loadConfig(file);
-    expect(config.model.model).toBe("demo");
+    expect(getActiveModelConfig(config.model).model).toBe("demo");
+    expect(config.model.active).toBe("default");
     expect(config.tools.maxWebChars).toBe(30_000);
     expect(config.platform.qq.markdownSupport).toBe(true);
   });
@@ -69,7 +70,7 @@ describe("配置解析", () => {
       ].join("\n")
     );
     const config = loadConfig(file);
-    expect(config.model).toMatchObject({
+    expect(getActiveModelConfig(config.model)).toMatchObject({
       timeoutSeconds: 0.5,
       maxRetries: 0,
       temperature: 0,
@@ -120,5 +121,51 @@ describe("配置解析", () => {
   it("拒绝 compress_batch 大于 context_turns", () => {
     const file = writeConfig(["[memory]", "context_turns = 3", "compress_batch = 5"].join("\n"));
     expect(() => loadConfig(file)).toThrow("memory.compress_batch 不能大于 memory.context_turns");
+  });
+
+  it("解析多 runtime 配置", () => {
+    const root = temporaryDirectory();
+    const file = path.join(root, "config.toml");
+    fs.writeFileSync(
+      file,
+      [
+        "[model]",
+        'active = "fast"',
+        "",
+        "[model.runtimes.main]",
+        'base_url = "https://main.example.com/v1"',
+        'api_key = "main-key"',
+        'model = "main-model"',
+        "",
+        "[model.runtimes.fast]",
+        'base_url = "https://fast.example.com/v1"',
+        'api_key = "fast-key"',
+        'model = "fast-model"',
+        ""
+      ].join("\n")
+    );
+    const config = loadConfig(file);
+    expect(config.model.active).toBe("fast");
+    expect(config.model.runtimes.main?.model).toBe("main-model");
+    expect(getActiveModelConfig(config.model).model).toBe("fast-model");
+  });
+
+  it("拒绝指向未知 runtime 的 active", () => {
+    const root = temporaryDirectory();
+    const file = path.join(root, "config.toml");
+    fs.writeFileSync(
+      file,
+      [
+        "[model]",
+        'active = "missing"',
+        "",
+        "[model.runtimes.main]",
+        'base_url = "https://example.com/v1"',
+        'api_key = "key"',
+        'model = "demo"',
+        ""
+      ].join("\n")
+    );
+    expect(() => loadConfig(file)).toThrow("model.active 指向未知 runtime：missing");
   });
 });

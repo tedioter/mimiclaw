@@ -8,9 +8,11 @@ import type {
   McpConfig,
   MemoryConfig,
   ModelConfig,
+  ModelSectionConfig,
   PlatformConfig
 } from "./types.js";
 import { ConfigError } from "../types/errors.js";
+import { isRecord } from "../utils/type-guards.js";
 import { loadMcpServersFromJson } from "../mcp/json-config.js";
 import {
   bool,
@@ -27,23 +29,53 @@ import {
 } from "./parser.js";
 import { DEFAULT_CONFIG_PATH, PROJECT_ROOT, projectPath, workspacePath } from "./paths.js";
 
-function parseModelConfig(raw: Table, requireModelKey: boolean): ModelConfig {
-  const model = table(raw.model, "model");
-  const apiKey = configString(model.api_key, "", "model.api_key");
+function parseModelFieldsFromTable(
+  runtimeTable: Table,
+  labelPrefix: string,
+  requireModelKey: boolean
+): ModelConfig {
+  const apiKey = configString(runtimeTable.api_key, "", `${labelPrefix}.api_key`);
   if (requireModelKey && !apiKey.trim()) {
-    throw new ConfigError("未配置模型密钥，请填写 config.toml 中的 model.api_key");
+    throw new ConfigError(`未配置模型密钥，请填写 config.toml 中的 ${labelPrefix}.api_key`);
   }
-  const baseUrl = httpUrl(model.base_url, "model.base_url");
-  const modelName = requiredString(model.model, "model.model");
+  const baseUrl = httpUrl(runtimeTable.base_url, `${labelPrefix}.base_url`);
+  const modelName = requiredString(runtimeTable.model, `${labelPrefix}.model`);
   return {
     baseUrl: baseUrl.replace(/\/+$/, ""),
     apiKey,
     model: modelName,
-    timeoutSeconds: positiveNumber(model.timeout_seconds, 90, "model.timeout_seconds"),
-    maxRetries: nonNegativeInteger(model.max_retries, 2, "model.max_retries"),
-    temperature: finiteNumber(model.temperature, 0.7, "model.temperature"),
-    enableThinking: bool(model.enable_thinking, true, "model.enable_thinking")
+    timeoutSeconds: positiveNumber(
+      runtimeTable.timeout_seconds,
+      90,
+      `${labelPrefix}.timeout_seconds`
+    ),
+    maxRetries: nonNegativeInteger(runtimeTable.max_retries, 2, `${labelPrefix}.max_retries`),
+    temperature: finiteNumber(runtimeTable.temperature, 0.7, `${labelPrefix}.temperature`),
+    enableThinking: bool(runtimeTable.enable_thinking, true, `${labelPrefix}.enable_thinking`)
   };
+}
+
+function parseModelSection(raw: Table, requireModelKey: boolean): ModelSectionConfig {
+  const modelTable = table(raw.model, "model");
+  const runtimesTable = modelTable.runtimes;
+  if (isRecord(runtimesTable) && Object.keys(runtimesTable).length > 0) {
+    const runtimes: Record<string, ModelConfig> = {};
+    for (const [id, value] of Object.entries(runtimesTable)) {
+      if (!isRecord(value)) {
+        throw new ConfigError(`配置项 model.runtimes.${id} 必须是表`);
+      }
+      runtimes[id] = parseModelFieldsFromTable(value, `model.runtimes.${id}`, requireModelKey);
+    }
+    const runtimeIds = Object.keys(runtimes);
+    const active =
+      configString(modelTable.active, "", "model.active").trim() || runtimeIds[0] || "main";
+    if (!runtimes[active]) {
+      throw new ConfigError(`model.active 指向未知 runtime：${active}`);
+    }
+    return { active, runtimes };
+  }
+  const single = parseModelFieldsFromTable(modelTable, "model", requireModelKey);
+  return { active: "default", runtimes: { default: single } };
 }
 
 function parseDisplayConfig(raw: Table): DisplayConfig {
@@ -177,7 +209,7 @@ export function loadConfig(configPath = DEFAULT_CONFIG_PATH, requireModelKey = t
   }
   const dataDir = projectPath(raw.data_dir, "data", "data_dir");
   return {
-    model: parseModelConfig(raw, requireModelKey),
+    model: parseModelSection(raw, requireModelKey),
     display: parseDisplayConfig(raw),
     tools: parseToolConfig(raw),
     memory: parseMemoryConfig(raw),

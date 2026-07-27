@@ -255,6 +255,28 @@ new Agent(model, memory, tools);
 - 飞书流式中断时降级补发行为与 QQ 一致，按已成功发出的 plain 补差。
 - 推送至 `master` 自动跑 CI；README 测试命令与目录说明更新。
 
+## 2026-07-27：多模型 runtime 与平台切换命令
+
+### 背景
+
+上一版只有单模型配置，Agent 直接持有一个模型实例，CLI 与 QQ 私聊没有运行时模型选择入口。
+
+### 变更
+
+- `[model]` 配置兼容单模型写法，并新增 `active` 与 `runtimes` 多模型写法；`ModelRuntime` 负责按需创建模型实例、维护当前 runtime 并执行切换。
+- `Agent` 改为依赖 `ModelRuntime`，每轮开始绑定当前模型；CLI 与 QQ 私聊通过 `ModelControl` 查询和切换 runtime，切换从下一轮对话生效。
+- CLI 新增模型选择器与命令历史，QQ 仅在 C2C 私聊中处理模型命令；运行日志改为写入 `data/runtime.log`。
+
+### 影响
+
+- 配置调用方从 `config.model` 单个 `ModelConfig` 调整为 `config.model.active/runtimes`，旧 flat 配置仍自动映射为 `default` runtime。
+- 平台启动时向 CLI、QQ 注入运行时模型控制；QQ 群聊、频道等非私聊消息不参与模型切换。
+- 新增模型 runtime、配置解析、命令历史与终端选择器测试。
+
+### 暂未解决的问题
+
+- 尚未提供 Web 或其他平台的模型切换入口。
+
 ## 后续记录格式
 
 提交架构相关改动时，在**同一次 commit** 中追加章节，结构如下：

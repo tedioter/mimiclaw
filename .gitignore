@@ -4,6 +4,7 @@ dist/
 config.toml
 mcp.json
 data/recent.json
+data/runtime.log
 data/MEMORY.md
 data/SOUL.md
 data/USER.md

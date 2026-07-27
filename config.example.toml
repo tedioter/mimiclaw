@@ -1,6 +1,7 @@
 data_dir = "data"
 
 [model]
+# 单模型（兼容旧配置）：解析为 runtime "default"
 base_url = "https://api.openai.com/v1"
 api_key = ""
 model = "gpt-4.1-mini"
@@ -8,6 +9,19 @@ enable_thinking = true
 # timeout_seconds = 90
 # max_retries = 2
 # temperature = 0.7
+
+# 多模型示例（启用时删除上方 flat 字段，改用 active + runtimes）：
+# active = "main"
+#
+# [model.runtimes.main]
+# base_url = "https://api.openai.com/v1"
+# api_key = ""
+# model = "gpt-4.1"
+#
+# [model.runtimes.fast]
+# base_url = "https://api.openai.com/v1"
+# api_key = ""
+# model = "gpt-4.1-mini"
 
 [display]
 show_thinking = false

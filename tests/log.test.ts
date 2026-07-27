@@ -1,10 +1,21 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { summarizeAssistantReplyLog, summarizeLogText, writeLog } from "../src/utils/log.js";
+import fs from "node:fs";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  getLogFilePath,
+  parseLogLines,
+  setLogFilePath,
+  summarizeAssistantReplyLog,
+  summarizeLogText,
+  writeLog
+} from "../src/utils/log.js";
+import {
+  cleanupTemporaryDirectories,
+  readLogFile,
+  temporaryDirectory,
+  useTestLogFile
+} from "./test-helpers.js";
 
-afterEach(() => {
-  vi.unstubAllEnvs();
-  vi.restoreAllMocks();
-});
+afterEach(cleanupTemporaryDirectories);
 
 describe("summarizeLogText", () => {
   it("短文本原样返回", () => {
@@ -35,31 +46,34 @@ describe("summarizeAssistantReplyLog", () => {
   });
 });
 
-describe("writeLog 颜色", () => {
-  it("TTY 下用户为蓝色、助手为绿色、错误为红色", () => {
-    vi.stubEnv("FORCE_COLOR", "1");
-    delete process.env.NO_COLOR;
-    Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
-    Object.defineProperty(process.stderr, "isTTY", { value: true, configurable: true });
-    const info = vi.spyOn(console, "info").mockImplementation(() => {});
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+describe("writeLog", () => {
+  it("未配置日志文件时不写入", () => {
+    setLogFilePath(undefined);
+    writeLog("info", "user", { content: "你好" });
+    expect(getLogFilePath()).toBeUndefined();
+  });
+
+  it("追加 JSON Lines 到日志文件", () => {
+    const root = temporaryDirectory();
+    const logPath = useTestLogFile(root);
 
     writeLog("info", "user", { content: "你好" });
     writeLog("info", "assistant", { content: "回复" });
     writeLog("error", "tool", { type: "tool_argument_error", content: "失败" });
 
-    expect(String(info.mock.calls[0]?.[0])).toMatch(/\x1b\[34m/);
-    expect(String(info.mock.calls[1]?.[0])).toMatch(/\x1b\[32m/);
-    expect(String(error.mock.calls[0]?.[0])).toMatch(/\x1b\[31m/);
+    const entries = readLogFile(logPath);
+    expect(entries).toEqual([
+      { level: "info", role: "user", content: "你好" },
+      { level: "info", role: "assistant", content: "回复" },
+      { level: "error", role: "tool", type: "tool_argument_error", content: "失败" }
+    ]);
+    expect(fs.readFileSync(logPath, "utf8").endsWith("\n")).toBe(true);
   });
 
-  it("设置 NO_COLOR 时不加颜色", () => {
-    vi.stubEnv("NO_COLOR", "1");
-    vi.stubEnv("FORCE_COLOR", "1");
-    const info = vi.spyOn(console, "info").mockImplementation(() => {});
-
-    writeLog("info", "user", { content: "你好" });
-
-    expect(String(info.mock.calls[0]?.[0])).not.toMatch(/\x1b\[/);
+  it("parseLogLines 忽略空行", () => {
+    expect(parseLogLines('{"level":"info"}\n\n{"level":"error"}\n')).toEqual([
+      { level: "info" },
+      { level: "error" }
+    ]);
   });
 });

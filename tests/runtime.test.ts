@@ -12,6 +12,7 @@ import { MessageBus } from "../src/bus/message-bus.js";
 import type { InboundMessage } from "../src/bus/message-bus.js";
 import type { AgentEvent } from "../src/types/events.js";
 import { createDeferred } from "../src/utils/async.js";
+import { getActiveModelConfig } from "../src/config/index.js";
 import { makeConfig, temporaryDirectory } from "./test-helpers.js";
 
 function mockAgent(
@@ -201,7 +202,8 @@ describe("createRuntime", () => {
     const configPath = writeRuntimeConfig(root);
     const runtime = await createRuntime(true, configPath);
     try {
-      expect(runtime.config.model.model).toBe("demo");
+      expect(getActiveModelConfig(runtime.config.model).model).toBe("demo");
+      expect(runtime.listModels().some((item) => item.active && item.model === "demo")).toBe(true);
       expect(runtime.agent).toBeDefined();
       expect(runtime.bus).toBeDefined();
     } finally {

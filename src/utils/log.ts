@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { errorMessage } from "../types/errors.js";
 
 export type LogLevel = "info" | "error";
@@ -8,42 +10,15 @@ const LOG_TEXT_MAX_CHARS = 100;
 /** 助手 turn_done 日志上限（含代码块，需完整可读）。 */
 const ASSISTANT_REPLY_LOG_MAX_CHARS = 8000;
 
-const ANSI = {
-  reset: "\x1b[0m",
-  blue: "\x1b[34m",
-  green: "\x1b[32m",
-  red: "\x1b[31m"
-} as const;
+let logFilePath: string | undefined;
 
-function colorsEnabled(stream: NodeJS.WriteStream | NodeJS.WritableStream): boolean {
-  if (process.env.NO_COLOR !== undefined) {
-    return false;
-  }
-  if (process.env.FORCE_COLOR !== undefined) {
-    return true;
-  }
-  return "isTTY" in stream && stream.isTTY === true;
+/** 设置结构化日志文件路径；传 undefined 则停止写入。 */
+export function setLogFilePath(filePath: string | undefined): void {
+  logFilePath = filePath;
 }
 
-function colorizeLine(
-  level: LogLevel,
-  role: string,
-  line: string,
-  stream: NodeJS.WriteStream | NodeJS.WritableStream
-): string {
-  if (!colorsEnabled(stream)) {
-    return line;
-  }
-  if (level === "error") {
-    return `${ANSI.red}${line}${ANSI.reset}`;
-  }
-  if (role === "user") {
-    return `${ANSI.blue}${line}${ANSI.reset}`;
-  }
-  if (role === "assistant") {
-    return `${ANSI.green}${line}${ANSI.reset}`;
-  }
-  return line;
+export function getLogFilePath(): string | undefined {
+  return logFilePath;
 }
 
 export function summarizeLogText(text: string): string {
@@ -60,12 +35,23 @@ export function summarizeAssistantReplyLog(text: string): string {
   return `${text.slice(0, ASSISTANT_REPLY_LOG_MAX_CHARS)}…[已截断，原长 ${text.length} 字符]`;
 }
 
+export function parseLogLines(content: string): Record<string, unknown>[] {
+  return content
+    .split("\n")
+    .filter((line) => line.trim())
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
 export function writeLog(level: LogLevel, role: string, details: Record<string, unknown>): void {
+  if (!logFilePath) {
+    return;
+  }
   const line = JSON.stringify({ level, role, ...details });
-  if (level === "error") {
-    console.error(colorizeLine(level, role, line, process.stderr));
-  } else {
-    console.info(colorizeLine(level, role, line, process.stdout));
+  try {
+    fs.mkdirSync(path.dirname(logFilePath), { recursive: true });
+    fs.appendFileSync(logFilePath, `${line}\n`, "utf8");
+  } catch {
+    // 日志写入失败时不影响主流程
   }
 }
 

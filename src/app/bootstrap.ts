@@ -20,11 +20,11 @@ function createAdapter(
 ): PlatformAdapter {
   switch (name) {
     case "qq":
-      return new QQAdapter(runtime.bus, runtime.config.platform.qq);
+      return new QQAdapter(runtime.bus, runtime.config.platform.qq, undefined, runtime);
     case "feishu":
       return new FeishuAdapter(runtime.bus, runtime.config.platform.feishu);
     case "cli":
-      return new CliAdapter(runtime.bus, options?.cli ?? { mode: "chat" });
+      return new CliAdapter(runtime.bus, options?.cli ?? { mode: "chat" }, runtime);
     default:
       throw new MimiError(`未知平台：${name satisfies never}`);
   }

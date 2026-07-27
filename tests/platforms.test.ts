@@ -246,7 +246,42 @@ function qqMessage(): QQInboundMessage {
   };
 }
 
+function qqModelControl() {
+  const models = [
+    { id: "main", model: "main-model", baseUrl: "https://main.example.com", active: true },
+    { id: "fast", model: "fast-model", baseUrl: "https://fast.example.com", active: false }
+  ];
+  let activeId = "main";
+  return {
+    listModels: () => models.map((item) => ({ ...item, active: item.id === activeId })),
+    switchModel: (id: string): void => {
+      if (!models.some((item) => item.id === id)) {
+        throw new Error(`未知模型 runtime：${id}`);
+      }
+      activeId = id;
+    }
+  };
+}
+
 describe("QQ 官方 SDK 适配", () => {
+  it("私聊模型命令切换 runtime 并直接回复，不进入 Agent", async () => {
+    const root = temporaryDirectory();
+    const client = new FakeQQClient();
+    const bus = new MessageBus();
+    const adapter = new QQAdapter(bus, makeConfig(root).platform.qq, client, qqModelControl());
+
+    await adapter.receiveMessage({ ...qqMessage(), content: "/model fast", messageId: "model-1" });
+    await adapter.receiveMessage({ ...qqMessage(), content: "/model", messageId: "model-2" });
+
+    expect(client.sent[0]).toContain("已切换为 fast");
+    expect(client.sent[0]).toContain("下一条私聊消息生效");
+    expect(client.sent[1]).toContain("* fast: fast-model");
+    expect(
+      await Promise.race([bus.consumeInboundMessage().then(() => true), Promise.resolve(false)])
+    ).toBe(false);
+    bus.close();
+  });
+
   it("短回复使用 SDK 普通消息接口", async () => {
     const root = temporaryDirectory();
     const client = new FakeQQClient();

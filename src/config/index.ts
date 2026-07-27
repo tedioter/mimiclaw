@@ -1,4 +1,5 @@
 export { loadConfig } from "./load.js";
+export { getActiveModelConfig } from "./model-section.js";
 export type * from "./types.js";
 export {
   DEFAULT_CONFIG_PATH,
@@ -6,5 +7,6 @@ export {
   DEFAULT_MCP_CONFIG_PATH,
   PROJECT_ROOT,
   recentMemoryPath,
+  runtimeLogPath,
   workspacePath
 } from "./paths.js";

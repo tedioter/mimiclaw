@@ -2,12 +2,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Agent } from "../src/agent/agent.js";
-import type { ToolConfig, AppConfig } from "../src/config/types.js";
+import type { ToolConfig, AppConfig, ModelConfig } from "../src/config/types.js";
 import type { Model, ModelEvent, ModelMessage } from "../src/model/index.js";
+import { ModelRuntime } from "../src/model/runtime.js";
 import { LongTermMemory, Memory, ShortTermMemory } from "../src/memory/index.js";
 import { createTools, ToolRegistry } from "../src/tools/toolregistry.js";
 import type { Tool } from "../src/tools/base.js";
 import { ToolError } from "../src/types/errors.js";
+import { parseLogLines, setLogFilePath } from "../src/utils/log.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -18,6 +20,7 @@ export function temporaryDirectory(): string {
 }
 
 export function cleanupTemporaryDirectories(): void {
+  setLogFilePath(undefined);
   while (temporaryDirectories.length) {
     const directory = temporaryDirectories.pop();
     if (directory) {
@@ -26,16 +29,39 @@ export function cleanupTemporaryDirectories(): void {
   }
 }
 
+export function useTestLogFile(root: string): string {
+  const logPath = path.join(root, "runtime.log");
+  setLogFilePath(logPath);
+  return logPath;
+}
+
+export function readLogFile(logPath: string): Record<string, unknown>[] {
+  if (!fs.existsSync(logPath)) {
+    return [];
+  }
+  return parseLogLines(fs.readFileSync(logPath, "utf8"));
+}
+
+export function makeModelConfig(overrides: Partial<ModelConfig> = {}): ModelConfig {
+  return {
+    baseUrl: "https://example.com/v1",
+    apiKey: "test",
+    model: "test",
+    timeoutSeconds: 30,
+    maxRetries: 0,
+    temperature: 0.7,
+    enableThinking: true,
+    ...overrides
+  };
+}
+
 export function makeConfig(root: string, toolOverrides: Partial<ToolConfig> = {}): AppConfig {
   return {
     model: {
-      baseUrl: "https://example.com/v1",
-      apiKey: "test",
-      model: "test",
-      timeoutSeconds: 30,
-      maxRetries: 0,
-      temperature: 0.7,
-      enableThinking: true
+      active: "default",
+      runtimes: {
+        default: makeModelConfig()
+      }
     },
     display: { showThinking: true, showToolCalls: true },
     tools: {
@@ -86,7 +112,14 @@ export function makeConfig(root: string, toolOverrides: Partial<ToolConfig> = {}
 }
 
 export function createTestAgent(model: Model, memory: Memory, tools: ToolRegistry): Agent {
-  return new Agent(model, memory, tools);
+  const modelRuntime = new ModelRuntime(
+    {
+      active: "default",
+      runtimes: { default: makeModelConfig() }
+    },
+    () => model
+  );
+  return new Agent(modelRuntime, memory, tools);
 }
 
 export class FakeModel implements Model {

@@ -1,8 +1,14 @@
 import { Agent } from "../agent/agent.js";
 import { MessageBus, MessageBusClosedError } from "../bus/message-bus.js";
 import { runShutdownSteps } from "../utils/shutdown.js";
-import { OpenAICompatibleModel } from "../model/openai-compatible.js";
-import { DEFAULT_CONFIG_PATH, loadConfig, recentMemoryPath } from "../config/index.js";
+import { ModelRuntime } from "../model/runtime.js";
+import {
+  DEFAULT_CONFIG_PATH,
+  loadConfig,
+  recentMemoryPath,
+  runtimeLogPath
+} from "../config/index.js";
+import { setLogFilePath } from "../utils/log.js";
 import type { AppConfig } from "../config/types.js";
 import { LongTermMemory } from "../memory/long-term-memory.js";
 import { Memory } from "../memory/memory.js";
@@ -10,6 +16,7 @@ import { ShortTermMemory } from "../memory/short-term-memory.js";
 import { createToolRegistry } from "../tools/toolregistry.js";
 import type { ToolRegistry } from "../tools/toolregistry.js";
 import type { AgentEvent } from "../types/events.js";
+import type { ModelRuntimeInfo } from "../model/runtime.js";
 
 export type AgentLoopControl = {
   isActive(): boolean;
@@ -81,6 +88,14 @@ export class AgentRuntime {
     return this.closePromise;
   }
 
+  listModels(): ModelRuntimeInfo[] {
+    return this.agent.modelRuntime.list();
+  }
+
+  switchModel(id: string): void {
+    this.agent.modelRuntime.switchActive(id);
+  }
+
   private async closeResources(): Promise<void> {
     await runShutdownSteps(
       [
@@ -117,15 +132,16 @@ export async function createRuntime(
   configPath: string = DEFAULT_CONFIG_PATH
 ): Promise<AgentRuntime> {
   const config = loadConfig(configPath, requireModelKey);
+  setLogFilePath(runtimeLogPath(config.dataDir));
   const { memory, registry } = await createMemoryAndTools(config);
   const bus = new MessageBus();
-  let model: OpenAICompatibleModel | undefined;
+  let modelRuntime: ModelRuntime | undefined;
   try {
-    model = new OpenAICompatibleModel(config.model);
-    const agent = new Agent(model, memory, registry);
+    modelRuntime = new ModelRuntime(config.model);
+    const agent = new Agent(modelRuntime, memory, registry);
     return new AgentRuntime(config, agent, bus);
   } catch (error) {
-    await Promise.allSettled([registry.close(), ...(model ? [model.close()] : [])]);
+    await Promise.allSettled([registry.close(), ...(modelRuntime ? [modelRuntime.close()] : [])]);
     throw error;
   }
 }

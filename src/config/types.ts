@@ -18,6 +18,12 @@ export type ModelConfig = {
   enableThinking: boolean;
 };
 
+/** [model] 段：active 指定当前对话 runtime，runtimes 为各模型实例配置。 */
+export type ModelSectionConfig = {
+  active: string;
+  runtimes: Readonly<Record<string, ModelConfig>>;
+};
+
 export type DisplayConfig = {
   showThinking: boolean;
   showToolCalls: boolean;
@@ -74,7 +80,7 @@ export type PlatformConfig = {
 };
 
 export type AppConfig = {
-  model: ModelConfig;
+  model: ModelSectionConfig;
   display: DisplayConfig;
   tools: ToolConfig;
   memory: MemoryConfig;

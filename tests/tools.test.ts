@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { ToolError } from "../src/types/errors.js";
 import { executeToolCall } from "../src/agent/tool-executor.js";
 import { parseToolArguments, Tool } from "../src/tools/base.js";
@@ -9,9 +9,11 @@ import { createTools, ToolRegistry } from "../src/tools/toolregistry.js";
 import { resolveWorkspacePath } from "../src/utils/workspace-path.js";
 import {
   cleanupTemporaryDirectories,
+  readLogFile,
   temporaryDirectory,
   testTool,
-  testToolDependencies
+  testToolDependencies,
+  useTestLogFile
 } from "./test-helpers.js";
 
 afterEach(cleanupTemporaryDirectories);
@@ -265,6 +267,8 @@ describe("内置工具", () => {
 
 describe("工具日志", () => {
   it("成功结果截断，失败结果完整记录", async () => {
+    const root = temporaryDirectory();
+    const logPath = useTestLogFile(root);
     const longText = "x".repeat(200);
     class LoggingTestTool extends Tool {
       readonly name = "logging_test";
@@ -283,8 +287,6 @@ describe("工具日志", () => {
       }
     }
     const tools = new ToolRegistry([new LoggingTestTool()]);
-    const info = vi.spyOn(console, "info").mockImplementation(() => {});
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
 
     await executeToolCall(
       tools,
@@ -302,67 +304,42 @@ describe("工具日志", () => {
       "turn-1"
     );
 
-    const successLog = info.mock.calls
-      .map(([line]) => JSON.parse(String(line)) as { type?: string; content?: string })
-      .find((entry) => entry.type === "tool_result");
-    const failLog = error.mock.calls
-      .map(([line]) => JSON.parse(String(line)) as { type?: string; content?: string })
-      .find((entry) => entry.type === "tool_result_error");
-    const throwLog = error.mock.calls
-      .map(
-        ([line]) =>
-          JSON.parse(String(line)) as {
-            type?: string;
-            content?: string;
-            stack?: string;
-            arguments?: Record<string, unknown>;
-          }
-      )
-      .find((entry) => entry.type === "tool_execution_error");
+    const parsedLogs = readLogFile(logPath);
+    const successLog = parsedLogs.find((entry) => entry.type === "tool_result");
+    const failLog = parsedLogs.find((entry) => entry.type === "tool_result_error");
+    const throwLog = parsedLogs.find((entry) => entry.type === "tool_execution_error");
 
-    expect(successLog?.content).toContain("…[已截断");
+    expect(String(successLog?.content)).toContain("…[已截断");
     expect(failLog?.content).toBe(`工具执行失败：${longText}`);
     expect(throwLog?.content).toBe(longText);
     expect(throwLog?.stack).toBeTruthy();
     expect(throwLog?.arguments).toEqual({ mode: "throw", intent: "测试" });
-
-    info.mockRestore();
-    error.mockRestore();
   });
 
   it("失败日志记录工具参数，成功调用日志仍不记录参数", async () => {
-    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
-    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const root = temporaryDirectory();
+    const logPath = useTestLogFile(root);
 
-    try {
-      await executeToolCall(
-        new ToolRegistry([testTool("read", temporaryDirectory())]),
-        {
-          callId: "read_fail",
-          name: "read",
-          arguments: { path: "../outside.txt", intent: "读取文件" }
-        },
-        "turn-2"
-      );
+    await executeToolCall(
+      new ToolRegistry([testTool("read", temporaryDirectory())]),
+      {
+        callId: "read_fail",
+        name: "read",
+        arguments: { path: "../outside.txt", intent: "读取文件" }
+      },
+      "turn-2"
+    );
 
-      const errorLogs = errors.mock.calls.map(
-        ([line]) => JSON.parse(String(line)) as Record<string, unknown>
-      );
-      const executionError = errorLogs.find((entry) => entry.type === "tool_execution_error");
-      expect(executionError?.arguments).toEqual({
-        path: "../outside.txt",
-        intent: "读取文件"
-      });
+    const parsedLogs = readLogFile(logPath);
+    const executionError = parsedLogs.find((entry) => entry.type === "tool_execution_error");
+    expect(executionError?.arguments).toEqual({
+      path: "../outside.txt",
+      intent: "读取文件"
+    });
 
-      const toolCallLogs = info.mock.calls.map(
-        ([line]) => JSON.parse(String(line)) as Record<string, unknown>
-      );
-      expect(toolCallLogs.find((entry) => entry.type === "tool_call")).not.toHaveProperty(
-        "arguments"
-      );
-    } finally {
-      errors.mockRestore();
-      info.mockRestore();
-    }
+    const toolCallLogs = parsedLogs.filter((entry) => entry.type === "tool_call");
+    expect(toolCallLogs.find((entry) => entry.type === "tool_call")).not.toHaveProperty(
+      "arguments"
+    );
   });
 });

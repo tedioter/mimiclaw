@@ -12,9 +12,14 @@ import {
   FakeModel,
   cleanupTemporaryDirectories,
   createTestAgent,
+  makeModelConfig,
+  readLogFile,
   temporaryDirectory,
-  testTool
+  testTool,
+  useTestLogFile
 } from "./test-helpers.js";
+import { Agent } from "../src/agent/agent.js";
+import { ModelRuntime } from "../src/model/runtime.js";
 
 afterEach(cleanupTemporaryDirectories);
 
@@ -46,6 +51,7 @@ describe("Agent 工具循环", () => {
     const model = new FakeModel([]);
     const close = vi.spyOn(model, "close");
     const agent = createTestAgent(model, createMemory(root), new ToolRegistry([]));
+    agent.modelRuntime.getActive();
 
     await Promise.all([agent.close(), agent.close()]);
     await agent.close();
@@ -215,45 +221,61 @@ describe("Agent 工具循环", () => {
       ],
       [{ type: "model_text_delta", text: "已处理失败信息。" }]
     ]);
+    const logPath = useTestLogFile(root);
     const agent = createTestAgent(
       model,
       createMemory(root),
       new ToolRegistry([createCountingTool().tool])
     );
-    const info = vi.spyOn(console, "info").mockImplementation(() => {});
-    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    try {
-      for await (const _event of agent.respond({ platform: "cli", text: "执行" })) {
-        // 消费完整事件流
-      }
-
-      const toolMessages = model.calls[1]?.filter((message) => message.role === "tool") ?? [];
-      expect(toolMessages.map((message) => message.content)).toEqual([
-        '不存在此工具："missing"',
-        "工具参数无效：工具参数不是有效的 JSON 对象"
-      ]);
-
-      const infoLogs = info.mock.calls.map(
-        ([line]) => JSON.parse(String(line)) as Record<string, unknown>
-      );
-      const toolCallLogs = infoLogs.filter((entry) => entry.type === "tool_call");
-      expect(toolCallLogs).toHaveLength(2);
-      expect(toolCallLogs.every((entry) => !("arguments" in entry) && !("content" in entry))).toBe(
-        true
-      );
-
-      const errorLogs = errors.mock.calls.map(
-        ([line]) => JSON.parse(String(line)) as Record<string, unknown>
-      );
-      expect(errorLogs.map((entry) => entry.type)).toEqual([
-        "tool_resolution_error",
-        "tool_argument_error"
-      ]);
-    } finally {
-      info.mockRestore();
-      errors.mockRestore();
+    for await (const _event of agent.respond({ platform: "cli", text: "执行" })) {
+      // 消费完整事件流
     }
+
+    const toolMessages = model.calls[1]?.filter((message) => message.role === "tool") ?? [];
+    expect(toolMessages.map((message) => message.content)).toEqual([
+      '不存在此工具："missing"',
+      "工具参数无效：工具参数不是有效的 JSON 对象"
+    ]);
+
+    const parsedLogs = readLogFile(logPath);
+    const toolCallLogs = parsedLogs.filter((entry) => entry.type === "tool_call");
+    expect(toolCallLogs).toHaveLength(2);
+    expect(toolCallLogs.every((entry) => !("arguments" in entry) && !("content" in entry))).toBe(
+      true
+    );
+
+    expect(
+      parsedLogs.filter((entry) => entry.level === "error").map((entry) => entry.type)
+    ).toEqual(["tool_resolution_error", "tool_argument_error"]);
+  });
+
+  it("切换 active runtime 后下一轮 respond 使用新模型", async () => {
+    const root = temporaryDirectory();
+    const modelA = new FakeModel([[{ type: "model_text_delta", text: "A" }]]);
+    const modelB = new FakeModel([[{ type: "model_text_delta", text: "B" }]]);
+    const modelRuntime = new ModelRuntime(
+      {
+        active: "a",
+        runtimes: {
+          a: makeModelConfig({ model: "a" }),
+          b: makeModelConfig({ model: "b" })
+        }
+      },
+      (id) => (id === "a" ? modelA : modelB)
+    );
+    const agent = new Agent(modelRuntime, createMemory(root), new ToolRegistry([]));
+
+    for await (const _event of agent.respond({ platform: "cli", text: "第一轮" })) {
+      // 消费完整事件流
+    }
+    modelRuntime.switchActive("b");
+    for await (const _event of agent.respond({ platform: "cli", text: "第二轮" })) {
+      // 消费完整事件流
+    }
+
+    expect(modelA.calls).toHaveLength(1);
+    expect(modelB.calls).toHaveLength(1);
   });
 
   it("模型流中断时保留已发出的 partial 并 turn_done", async () => {
