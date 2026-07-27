@@ -78,7 +78,7 @@ export class FeishuCardBuffer {
     return latest;
   }
 
-  async produce(stream: FeishuCardStream): Promise<void> {
+  async produce(stream: FeishuCardStream, onPublished?: () => void): Promise<void> {
     let lastUpdate = 0;
     while (true) {
       if (!this.latest && !this.done) {
@@ -104,6 +104,7 @@ export class FeishuCardBuffer {
       } else {
         await stream.update(factory());
       }
+      onPublished?.();
       lastUpdate = Date.now();
       if (this.done && !this.latest) {
         return;
@@ -120,7 +121,7 @@ export class FeishuStreamComposer {
   private publishedPlainAnswer = "";
   finalText = "";
 
-  /** 记录最近一次成功排队发布的最终回答 plain 前缀。 */
+  /** 记录卡片流式更新成功后、当前已发出的最终回答 plain 前缀。 */
   markPublished(): void {
     this.publishedPlainAnswer = this.answerParts.join("");
   }
@@ -435,7 +436,11 @@ export class FeishuAdapter extends PlatformAdapter {
       streamError: undefined as unknown
     };
     context.streamTask = channel
-      .stream(composer.card(), (stream) => buffer.produce(stream), message.messageId)
+      .stream(
+        composer.card(),
+        (stream) => buffer.produce(stream, () => composer.markPublished()),
+        message.messageId
+      )
       .catch((error: unknown) => {
         context.streamError = error;
       });
@@ -461,7 +466,6 @@ export class FeishuAdapter extends PlatformAdapter {
       context.terminalKind = "turn_error";
     }
     if (context.composer.consume(message.event)) {
-      context.composer.markPublished();
       context.buffer.publish(() => context.composer.card());
     }
     if (message.event.type !== "turn_done" && message.event.type !== "turn_error") {

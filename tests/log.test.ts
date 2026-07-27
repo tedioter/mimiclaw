@@ -1,9 +1,38 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { writeLog } from "../src/utils/log.js";
+import { summarizeAssistantReplyLog, summarizeLogText, writeLog } from "../src/utils/log.js";
 
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
+});
+
+describe("summarizeLogText", () => {
+  it("短文本原样返回", () => {
+    expect(summarizeLogText("短")).toBe("短");
+  });
+
+  it("超长文本截断并标注原长", () => {
+    const long = "甲".repeat(120);
+    const summary = summarizeLogText(long);
+    expect(summary.length).toBeLessThan(long.length);
+    expect(summary).toContain("已截断");
+    expect(summary).toContain("120 字符");
+  });
+});
+
+describe("summarizeAssistantReplyLog", () => {
+  it("8000 字符以内原样返回", () => {
+    const text = "乙".repeat(8000);
+    expect(summarizeAssistantReplyLog(text)).toBe(text);
+  });
+
+  it("超过 8000 字符时截断并标注原长", () => {
+    const long = "丙".repeat(9000);
+    const summary = summarizeAssistantReplyLog(long);
+    expect(summary.startsWith("丙".repeat(8000))).toBe(true);
+    expect(summary).toContain("已截断");
+    expect(summary).toContain("9000 字符");
+  });
 });
 
 describe("writeLog 颜色", () => {

@@ -8,7 +8,7 @@
 
 - QQ 仅处理 C2C 私聊消息，群聊 / 频道 / 群 DM 会被忽略
 - 飞书仅处理 `p2p` 私聊文本消息
-- 平台适配器与 Agent 通过 `MessageBus` 解耦：适配器负责收发，Agent 负责对话；设计前提是个人单会话串行使用
+- 平台适配器与 Agent 通过 `MessageBus` 解耦：适配器负责收发，`AgentRuntime` 驱动 `Agent` 循环；设计前提是个人单会话串行使用
 
 ## 功能
 
@@ -66,15 +66,20 @@ MCP 默认关闭。开启 `[mcp] enabled = true` 并在 `mcp.json` 中配置 ser
 ## 测试
 
 ```powershell
-npm test
 npm run typecheck
+npm run format:check
+npm test
 npm run build
 ```
+
+推送至 GitHub 后，`.github/workflows/ci.yml` 会在 `master` 分支上自动运行相同检查。
+
+架构演进见 [`docs/architecture-changelog.md`](docs/architecture-changelog.md)。
 
 ## 目录
 
 ```text
-src/app/              入口（main）、命令解析与 bootstrap 组装
+src/app/              入口（main）、bootstrap 平台启动与 runtime 组装
 src/bus/              MessageBus：平台与 Agent 的消息路由
 src/types/            共享事件协议与错误类型
 src/config/           配置读取、校验、类型与路径解析
@@ -85,5 +90,6 @@ src/tools/            内置工具
 src/memory/           SOUL/USER/MEMORY 存储、近期上下文与压缩
 src/mcp/              MCP 配置、连接和代理工具
 src/platforms/        CLI、QQ、飞书等平台适配器
+docs/                 架构迭代记录
 data/                 SOUL.md、USER.md、MEMORY.md 与 recent.json
 ```

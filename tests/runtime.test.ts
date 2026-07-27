@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
 import type { Agent } from "../src/agent/agent.js";
-import { AgentRuntime, createAgentLoopControl, shouldShowEvent } from "../src/app/runtime.js";
+import {
+  AgentRuntime,
+  createAgentLoopControl,
+  createRuntime,
+  shouldShowEvent
+} from "../src/app/runtime.js";
 import { MessageBus } from "../src/bus/message-bus.js";
 import type { InboundMessage } from "../src/bus/message-bus.js";
 import type { AgentEvent } from "../src/types/events.js";
@@ -165,5 +172,40 @@ describe("shouldShowEvent", () => {
         { showThinking: false, showToolCalls: false }
       )
     ).toBe(true);
+  });
+});
+
+function writeRuntimeConfig(root: string): string {
+  fs.mkdirSync(path.join(root, "data"), { recursive: true });
+  fs.writeFileSync(path.join(root, "mcp.json"), '{"mcpServers": {}}\n');
+  const configPath = path.join(root, "config.toml");
+  fs.writeFileSync(
+    configPath,
+    [
+      `data_dir = "${path.join(root, "data").replace(/\\/g, "/")}"`,
+      "[model]",
+      'base_url = "https://example.com/v1"',
+      'api_key = "test-key"',
+      'model = "demo"',
+      "[mcp]",
+      `config_file = "${path.join(root, "mcp.json").replace(/\\/g, "/")}"`,
+      ""
+    ].join("\n")
+  );
+  return configPath;
+}
+
+describe("createRuntime", () => {
+  it("从配置文件组装 AgentRuntime", async () => {
+    const root = temporaryDirectory();
+    const configPath = writeRuntimeConfig(root);
+    const runtime = await createRuntime(true, configPath);
+    try {
+      expect(runtime.config.model.model).toBe("demo");
+      expect(runtime.agent).toBeDefined();
+      expect(runtime.bus).toBeDefined();
+    } finally {
+      await runtime.close();
+    }
   });
 });

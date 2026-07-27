@@ -112,8 +112,11 @@ async function createMemoryAndTools(config: AppConfig): Promise<{
   return { memory, registry };
 }
 
-export async function createRuntime(requireModelKey = true): Promise<AgentRuntime> {
-  const config = loadConfig(DEFAULT_CONFIG_PATH, requireModelKey);
+export async function createRuntime(
+  requireModelKey = true,
+  configPath: string = DEFAULT_CONFIG_PATH
+): Promise<AgentRuntime> {
+  const config = loadConfig(configPath, requireModelKey);
   const { memory, registry } = await createMemoryAndTools(config);
   const bus = new MessageBus();
   let model: OpenAICompatibleModel | undefined;

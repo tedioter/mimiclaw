@@ -455,6 +455,47 @@ async function driveFeishuBusTurn(
 }
 
 describe("飞书适配", () => {
+  it("流式发送中途失败后只补发尚未发出的剩余回复", async () => {
+    const root = temporaryDirectory();
+    const channel = new FakeFeishuChannel(false, 1);
+    const first = "甲".repeat(80);
+    const second = "乙".repeat(80);
+    const bus = new MessageBus();
+    const config = makeConfig(root).platform.feishu;
+    config.allowedSenderIds = new Set(["user-1"]);
+    const adapter = new FeishuAdapter(bus, config, channel);
+
+    await driveFeishuBusTurn(bus, adapter, feishuMessage(), async function* () {
+      yield { type: "text_delta", text: first };
+      yield { type: "text_delta", text: second };
+      yield { type: "turn_done", text: `${first}${second}` };
+    });
+
+    expect(channel.sent).toHaveLength(1);
+    expect(channel.sent[0]).toContain(second);
+    expect(channel.sent[0]).not.toContain(first);
+    expect(channel.sent[0]).toContain("[流式回复中断，以下为剩余回复]");
+  });
+
+  it("流式全部失败时降级补发完整剩余回复", async () => {
+    const root = temporaryDirectory();
+    const channel = new FakeFeishuChannel(true);
+    const full = "甲".repeat(160);
+    const bus = new MessageBus();
+    const config = makeConfig(root).platform.feishu;
+    config.allowedSenderIds = new Set(["user-1"]);
+    const adapter = new FeishuAdapter(bus, config, channel);
+
+    await driveFeishuBusTurn(bus, adapter, feishuMessage(), async function* () {
+      yield { type: "text_delta", text: full };
+      yield { type: "turn_done", text: full };
+    });
+
+    expect(channel.sent).toHaveLength(1);
+    expect(channel.sent[0]).toContain("[流式回复中断，以下为剩余回复]");
+    expect(channel.sent[0]).toContain(full);
+  });
+
   it("turn_error 时流式失败不发送降级补发", async () => {
     const root = temporaryDirectory();
     const channel = new FakeFeishuChannel(true);

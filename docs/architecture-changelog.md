@@ -75,6 +75,8 @@ src/app/turn-coordinator.ts
   -> 下一轮使用新 prompt 和新历史
 ```
 
+
+
 #### 5. 上下文刷新
 
 App 提交一轮对话后，会重新读取记忆文件并更新同一个 `AgentContext` 对象的：
@@ -94,17 +96,23 @@ App 提交一轮对话后，会重新读取记忆文件并更新同一个 `Agent
 - `src/app/turn-coordinator.ts`：上下文压缩和记忆提交。
 - `tests/agent-runner.test.ts`：验证 App 提交回调。
 
+
+
 ### 暂未实现
 
 运行时模型切换和思考程度切换暂未实现，当前只完成了后续扩展所需的 Agent 与 App 职责分离。
 
 ## 2026-07-25：Agent 依赖 memory 派生上下文，MCP 归入工具层
 
+
+
 ### 背景
 
 上一版通过 `AgentContext` 在 App 层缓存 prompt 与历史，并在提交后刷新同一对象。边界仍不够清晰：Agent 间接依赖 App 组装的上下文，MCP 生命周期散落在 Runtime，展示过滤混在 Agent 与平台之间。
 
 ### 变更
+
+
 
 #### 1. Agent 只依赖 model、memory、tools
 
@@ -124,11 +132,15 @@ new Agent(model, memory, tools);
 - 每轮 `runTurn` 开头调用 `buildPromptContext(memory)` 现读 prompt 与近期对话；`runTurn` 期间不写 memory。
 - 调试接口改为 `readPromptContext()`。
 
+
+
 #### 2. 轮次结束处理统一到 Agent 层
 
 - 删除 `src/app/turn-coordinator.ts`。
 - 新增 `src/agent/turn-end-handler.ts`，导出 `handleTurnEnd()`：先压缩短期记忆，再 append 当前轮。
 - `Agent.handleTurnEnd()` 为对外薄封装；`runAgentLoop` 在 `turn_done` 后调用。
+
+
 
 #### 3. Memory 承载压缩策略
 
@@ -139,10 +151,14 @@ new Agent(model, memory, tools);
 - `createToolRegistry()` 连接 MCP 并将代理工具并入同一注册表；`ToolRegistry.close()` 关闭 hub。
 - `AgentRuntime` 精简为 `{ config, agent, bus }`，不再暴露 memory、model、mcpHub。
 
+
+
 #### 5. 展示过滤与平台流式修正
 
 - `shouldPublishAgentEvent()` 与 `runAgentLoop(..., display?)` 在 App 层按配置过滤 thinking、tool_intent。
 - 飞书/QQ 流式：工具轮旁白不计入最终回答，避免 `turn_done` 补发重复。
+
+
 
 #### 6. 其他
 
@@ -150,18 +166,26 @@ new Agent(model, memory, tools);
 - MCP 远程传输统一 `StreamableHTTPClientTransport`；Zod 4 `looseObject` 替代 `passthrough`。
 - 工具失败日志附带完整参数便于排查。
 
+
+
 ### 影响
 
 - 调用方：`commitTurn` 更名为 `handleTurnEnd`；不再存在 `AgentContext` 与 Runtime 上的 memory/model 访问。
 - 数据流：memory 为 prompt 唯一来源；下一轮自动读到最新长期记忆与压缩摘要。
 - 配置：`transport: sse` 仅为别名，运行时与 `http` 相同（Streamable HTTP）。
 
+
+
 ### 暂未解决的问题
 
 - 运行时模型切换与 Anthropic 原生 API 适配仍未实现。
 - 仅支持旧版 HTTP+SSE、不支持 Streamable HTTP 的 MCP 服务可能无法连接。
 
+
+
 ## 2026-07-27：Runtime 内聚 Agent 循环，总线与平台出站分离
+
+
 
 ### 背景
 
@@ -169,16 +193,22 @@ new Agent(model, memory, tools);
 
 ### 变更
 
+
+
 #### 1. AgentRuntime 接管循环
 
 - 删除 `src/app/agent-runner.ts`；`AgentRuntime.runLoop()` 消费入站消息、驱动 `agent.respond()`、按 display 过滤出站事件。
 - `turn_done` 后调用 `agent.handleTurnDone()`；`createRuntime()` 取代 `loadRuntime()`，运行时组装留在 `src/app/runtime.ts`。
 - `shouldShowEvent()` 取代 `shouldPublishAgentEvent()`。
 
+
+
 #### 2. turn_done 命名与 handler 统一
 
 - `handleTurnEnd` / `turn-end-handler` 更名为 `handleTurnDone` / `turn-done-handler`。
 - 记忆写入与压缩错误在 `turnDoneHandler()` 内记录日志，不向上抛出。
+
+
 
 #### 3. MessageBus 出站语义澄清
 
@@ -186,10 +216,14 @@ new Agent(model, memory, tools);
 - 平台对外 API 纯文本改为 `PlatformTextMessage`；总线方法统一带 `Message` 后缀（`publishInboundMessage` 等）。
 - 删除 `BusOutboundMessage` 导出。
 
+
+
 #### 4. 流式降级与 Agent 容错
 
 - 飞书/QQ 用 `remainingFinalAnswer` / `remainingAfterStreamFailure` 按已成功发出的 plain 补差；仅 `turn_done` 终端触发降级补发。
 - Agent 推理异常时若已有部分 `text_delta`，仍 yield `turn_done` 以便记忆提交；助手日志单独放宽截断上限（`summarizeAssistantReplyLog`）。
+
+
 
 ### 影响
 
@@ -197,9 +231,29 @@ new Agent(model, memory, tools);
 - 测试：`agent-runner.test.ts` 迁移为 `runtime.test.ts`。
 - `bootstrap.ts` 仅负责平台启动，re-export `createRuntime` 与 `AgentRuntime`。
 
+
+
 ### 暂未解决的问题
 
-- 运行时模型切换与 Anthropic 原生 API 适配仍未实现。
+- 运行时模型切换仍未实现。
+
+## 2026-07-27：飞书流式降级修复、CI 与测试补全
+
+### 背景
+
+飞书 `markPublished()` 在卡片 `stream.update` 成功前就执行，导致流式失败降级几乎不会补发；缺少 `createRuntime` 冒烟测试与 CI 门禁；README 未反映 runtime 职责分离。
+
+### 变更
+
+- `FeishuCardBuffer.produce()` 在卡片更新成功后回调 `markPublished()`，与 QQ 的「发送成功后再记 plain」对齐。
+- `createRuntime()` 支持可选 `configPath`，便于测试与多配置场景。
+- 新增 GitHub Actions CI：`typecheck`、`format:check`、`test`、`build`。
+- 补充 `summarizeAssistantReplyLog`、`createRuntime`、飞书流式降级集成测试。
+
+### 影响
+
+- 飞书流式中断时降级补发行为与 QQ 一致，按已成功发出的 plain 补差。
+- 推送至 `master` 自动跑 CI；README 测试命令与目录说明更新。
 
 ## 后续记录格式
 
@@ -222,3 +276,4 @@ new Agent(model, memory, tools);
 
 ### 暂未解决的问题
 ```
+
