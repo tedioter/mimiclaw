@@ -59,15 +59,3 @@ export function buildPromptContext(memory: Memory): PromptContext {
     messages: memory.shortTerm.asMessages(state)
   };
 }
-
-export function buildPrompt(memory: Memory, userText: string): ModelMessage[] {
-  const context = buildPromptContext(memory);
-  return [
-    {
-      role: "system",
-      content: context.prompt
-    },
-    ...context.messages,
-    { role: "user", content: userText }
-  ];
-}

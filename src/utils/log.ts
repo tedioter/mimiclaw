@@ -5,6 +5,9 @@ export type LogLevel = "info" | "error";
 /** 日志正文上限：短内容保留全文，避免长回复和工具输出淹没日志。 */
 const LOG_TEXT_MAX_CHARS = 100;
 
+/** 助手 turn_done 日志上限（含代码块，需完整可读）。 */
+const ASSISTANT_REPLY_LOG_MAX_CHARS = 8000;
+
 const ANSI = {
   reset: "\x1b[0m",
   blue: "\x1b[34m",
@@ -48,6 +51,13 @@ export function summarizeLogText(text: string): string {
     return text;
   }
   return `${text.slice(0, LOG_TEXT_MAX_CHARS)}…[已截断，原长 ${text.length} 字符]`;
+}
+
+export function summarizeAssistantReplyLog(text: string): string {
+  if (text.length <= ASSISTANT_REPLY_LOG_MAX_CHARS) {
+    return text;
+  }
+  return `${text.slice(0, ASSISTANT_REPLY_LOG_MAX_CHARS)}…[已截断，原长 ${text.length} 字符]`;
 }
 
 export function writeLog(level: LogLevel, role: string, details: Record<string, unknown>): void {

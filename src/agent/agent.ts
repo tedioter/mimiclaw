@@ -1,15 +1,20 @@
-import { MimiError, ModelError, errorMessage, errorName } from "../types/errors.js";
+import { MimiError, ModelError } from "../types/errors.js";
 import type { InboundMessage } from "../bus/message-bus.js";
 import type { AgentEvent } from "../types/events.js";
 import type { PendingToolCall } from "../tools/base.js";
 import type { ToolRegistry } from "../tools/toolregistry.js";
 import type { Memory } from "../memory/memory.js";
 import { AsyncMutexLock } from "../utils/async-mutex-lock.js";
-import { formatErrorForLog, summarizeLogText, writeLog } from "../utils/log.js";
+import {
+  formatErrorForLog,
+  summarizeAssistantReplyLog,
+  summarizeLogText,
+  writeLog
+} from "../utils/log.js";
 import { buildTurnId } from "../utils/turn-id.js";
 import type { Model, ModelMessage } from "../model/index.js";
-import { buildPromptContext, type PromptContext } from "./prompt.js";
-import { handleTurnEnd } from "./turn-end-handler.js";
+import { buildPromptContext } from "./prompt.js";
+import { turnDoneHandler } from "./turn-done-handler.js";
 import { executeToolCall, formatToolIntent, parsePendingToolCalls } from "./tool-executor.js";
 
 export class Agent {
@@ -27,23 +32,8 @@ export class Agent {
     return this.closePromise;
   }
 
-  /** 从 memory 派生 prompt 与近期对话，供测试或调试读取。 */
-  readPromptContext(): PromptContext {
-    return buildPromptContext(this.memory);
-  }
-
-  async handleTurnEnd(inbound: InboundMessage, assistantReply: string): Promise<void> {
-    const turnId = buildTurnId(inbound);
-    try {
-      await handleTurnEnd(this.model, this.memory, inbound, assistantReply, turnId);
-    } catch (error) {
-      writeLog("error", "memory", {
-        turnId,
-        type: "memory_commit_error",
-        errorName: errorName(error),
-        content: summarizeLogText(errorMessage(error))
-      });
-    }
+  async handleTurnDone(inbound: InboundMessage, assistantReply: string): Promise<void> {
+    await turnDoneHandler(this.model, this.memory, inbound, assistantReply);
   }
 
   async *respond(inbound: InboundMessage): AsyncIterable<AgentEvent> {
@@ -53,15 +43,91 @@ export class Agent {
       content: summarizeLogText(inbound.text)
     });
     const release = await this.turnLock.acquire();
+    const responseText: string[] = [];
+    const reasoningText: string[] = [];
     try {
       try {
-        yield* this.runTurn(inbound, turnId);
+        const promptContext = buildPromptContext(this.memory);
+        const messages: ModelMessage[] = [
+          { role: "system", content: promptContext.prompt },
+          ...promptContext.messages,
+          { role: "user", content: inbound.text }
+        ];
+        while (true) {
+          responseText.length = 0;
+          reasoningText.length = 0;
+          const pendingToolCalls = new Map<number, PendingToolCall>();
+          for await (const event of this.model.streamChat(messages, this.tools.schemas())) {
+            if (event.type === "model_thinking_delta") {
+              reasoningText.push(event.text);
+              yield { type: "thinking_delta", text: event.text };
+            } else if (event.type === "model_text_delta") {
+              responseText.push(event.text);
+              yield { type: "text_delta", text: event.text };
+            } else if (event.type === "model_tool_call_delta") {
+              const pending = pendingToolCalls.get(event.index) ?? {
+                id: "",
+                name: "",
+                arguments: ""
+              };
+              if (event.callId) {
+                pending.id = event.callId;
+              }
+              if (event.name) {
+                pending.name += event.name;
+              }
+              pending.arguments += event.arguments;
+              pendingToolCalls.set(event.index, pending);
+            }
+          }
+          if (!pendingToolCalls.size) {
+            const assistantReply = responseText.join("").trim();
+            if (!assistantReply) {
+              throw new ModelError("模型未返回可显示的回复，请稍后重试。");
+            }
+            writeLog("info", "assistant", {
+              turnId,
+              content: summarizeAssistantReplyLog(assistantReply)
+            });
+            yield { type: "turn_done", text: assistantReply };
+            return;
+          }
+          const calls = parsePendingToolCalls(pendingToolCalls);
+          const reasoning = reasoningText.join("");
+          messages.push({
+            role: "assistant",
+            content: responseText.join("") || null,
+            ...(reasoning ? { reasoning_content: reasoning } : {}),
+            tool_calls: calls.map(({ call, rawArguments }) => ({
+              id: call.callId,
+              type: "function" as const,
+              function: { name: call.name, arguments: rawArguments }
+            }))
+          });
+          for (const { call, argumentError, rawArguments } of calls) {
+            yield { type: "tool_intent", toolName: call.name, intent: formatToolIntent(call) };
+            messages.push({
+              role: "tool",
+              tool_call_id: call.callId,
+              content: await executeToolCall(this.tools, call, turnId, argumentError, rawArguments)
+            });
+          }
+        }
       } catch (error) {
         writeLog("error", "error", {
           turnId,
           type: "agent_error",
           ...formatErrorForLog(error)
         });
+        const partialReply = responseText.join("").trim();
+        if (partialReply) {
+          writeLog("info", "assistant", {
+            turnId,
+            content: summarizeAssistantReplyLog(partialReply)
+          });
+          yield { type: "turn_done", text: partialReply };
+          return;
+        }
         if (error instanceof MimiError) {
           yield { type: "turn_error", message: `处理失败：${error.message}` };
         } else {
@@ -70,75 +136,6 @@ export class Agent {
       }
     } finally {
       release();
-    }
-  }
-
-  private async *runTurn(inbound: InboundMessage, turnId: string): AsyncIterable<AgentEvent> {
-    const promptContext = buildPromptContext(this.memory);
-    const messages: ModelMessage[] = [
-      { role: "system", content: promptContext.prompt },
-      ...promptContext.messages,
-      { role: "user", content: inbound.text }
-    ];
-    while (true) {
-      const pendingToolCalls = new Map<number, PendingToolCall>();
-      const responseText: string[] = [];
-      const reasoningText: string[] = [];
-      for await (const event of this.model.streamChat(messages, this.tools.schemas())) {
-        if (event.type === "model_thinking_delta") {
-          reasoningText.push(event.text);
-          yield { type: "thinking_delta", text: event.text };
-        } else if (event.type === "model_text_delta") {
-          responseText.push(event.text);
-          yield { type: "text_delta", text: event.text };
-        } else if (event.type === "model_tool_call_delta") {
-          const pending = pendingToolCalls.get(event.index) ?? {
-            id: "",
-            name: "",
-            arguments: ""
-          };
-          if (event.callId) {
-            pending.id = event.callId;
-          }
-          if (event.name) {
-            pending.name += event.name;
-          }
-          pending.arguments += event.arguments;
-          pendingToolCalls.set(event.index, pending);
-        }
-      }
-      if (!pendingToolCalls.size) {
-        const assistantReply = responseText.join("").trim();
-        if (!assistantReply) {
-          throw new ModelError("模型未返回可显示的回复，请稍后重试。");
-        }
-        writeLog("info", "assistant", {
-          turnId,
-          content: summarizeLogText(assistantReply)
-        });
-        yield { type: "turn_done", text: assistantReply };
-        return;
-      }
-      const calls = parsePendingToolCalls(pendingToolCalls);
-      const reasoning = reasoningText.join("");
-      messages.push({
-        role: "assistant",
-        content: responseText.join("") || null,
-        ...(reasoning ? { reasoning_content: reasoning } : {}),
-        tool_calls: calls.map(({ call, rawArguments }) => ({
-          id: call.callId,
-          type: "function" as const,
-          function: { name: call.name, arguments: rawArguments }
-        }))
-      });
-      for (const { call, argumentError, rawArguments } of calls) {
-        yield { type: "tool_intent", toolName: call.name, intent: formatToolIntent(call) };
-        messages.push({
-          role: "tool",
-          tool_call_id: call.callId,
-          content: await executeToolCall(this.tools, call, turnId, argumentError, rawArguments)
-        });
-      }
     }
   }
 }

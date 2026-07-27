@@ -1,8 +1,20 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { createAgentLoopControl, runAgentLoop } from "../src/app/agent-runner.js";
+import type { Agent } from "../src/agent/agent.js";
+import { AgentRuntime, createAgentLoopControl } from "../src/app/runtime.js";
 import { MessageBus } from "../src/bus/message-bus.js";
-import { MessageDeduper, finalAnswerSuffix } from "../src/platforms/base.js";
-import { FeishuCardBuffer, FeishuStreamComposer } from "../src/platforms/feishu.js";
+import {
+  MessageDeduper,
+  remainingAfterStreamFailure,
+  remainingFinalAnswer
+} from "../src/platforms/base.js";
+import {
+  FeishuAdapter,
+  FeishuCardBuffer,
+  FeishuStreamComposer,
+  type FeishuCard,
+  type FeishuCardStream,
+  type FeishuInboundMessage
+} from "../src/platforms/feishu.js";
 import type { InboundMessage } from "../src/bus/message-bus.js";
 import type { AgentEvent } from "../src/types/events.js";
 import { createDeferred } from "../src/utils/async.js";
@@ -31,7 +43,9 @@ async function driveBusTurn(
     }
   });
   const loopControl = createAgentLoopControl();
-  const agentLoop = runAgentLoop({ respond }, bus, loopControl);
+  const agent = { respond, handleTurnDone: async () => {} } as unknown as Agent;
+  const runtime = new AgentRuntime(makeConfig(temporaryDirectory()), agent, bus);
+  const agentLoop = runtime.runLoop(loopControl);
   const dispatchLoop = bus.dispatchHandlers();
   try {
     adapter.bindSendLoop();
@@ -104,10 +118,18 @@ describe("平台通用行为", () => {
     expect(codeChunks[1]).toMatch(/^`/);
   });
 
-  it("流式正文只补齐缺失的最终内容", () => {
-    expect(finalAnswerSuffix("已有", "已有补充")).toBe("补充");
-    expect(finalAnswerSuffix("旧正文", "新正文")).toBe("\n\n**最终回答**\n新正文");
-    expect(finalAnswerSuffix("完整", "完整")).toBe("");
+  it("最终回答只补齐尚未发出的 plain 后缀", () => {
+    expect(remainingFinalAnswer("已有", "已有补充")).toBe("补充");
+    expect(remainingFinalAnswer("旧正文", "新正文")).toBe("");
+    expect(remainingFinalAnswer("完整", "完整")).toBe("");
+    expect(remainingFinalAnswer("", "新正文")).toBe("新正文");
+  });
+
+  it("流式失败降级只按已成功发送的 plain 补差", () => {
+    expect(remainingAfterStreamFailure("", "已有补充", "已有补充")).toBe("已有补充");
+    expect(remainingAfterStreamFailure("已有", "已有补充", "已有补充")).toBe("补充");
+    expect(remainingAfterStreamFailure("已有", "已有补充", "已有补充更多")).toBe("补充更多");
+    expect(remainingAfterStreamFailure("已有补充", "已有补充", "已有补充")).toBe("");
   });
 
   it("拒绝无效的消息分段上限", () => {
@@ -298,6 +320,7 @@ describe("QQ 官方 SDK 适配", () => {
     expect(client.sent).toHaveLength(1);
     expect(client.sent[0]).toContain("流式回复中断");
     expect(client.sent[0]).toContain("最终回答");
+    expect(client.sent[0]).not.toContain("**最终回答**");
   });
 
   it("流式发送中途失败后只发送尚未发送的回答", async () => {
@@ -317,5 +340,135 @@ describe("QQ 官方 SDK 适配", () => {
     expect(client.sent).toHaveLength(1);
     expect(client.sent[0]).toContain(second);
     expect(client.sent[0]).not.toContain(first);
+    expect(client.sent[0]).not.toContain("**最终回答**");
+  });
+
+  it("流式全部失败时降级发送完整回复并分片", async () => {
+    const root = temporaryDirectory();
+    const client = new FakeQQClient(true);
+    const full = "甲".repeat(160);
+    const bus = new MessageBus();
+    const adapter = new QQAdapter(bus, makeConfig(root).platform.qq, client);
+
+    await driveBusTurn(bus, adapter, qqMessage(), async function* () {
+      yield { type: "text_delta", text: full };
+      yield { type: "turn_done", text: full };
+    });
+
+    expect(client.sent).toHaveLength(1);
+    expect(client.sent[0]).toContain("[流式回复中断，以下为剩余回复]");
+    expect(client.sent[0]).toContain(full);
+  });
+
+  it("turn_error 时流式失败不发送降级补发", async () => {
+    const root = temporaryDirectory();
+    const client = new FakeQQClient(true);
+    const longText = "甲".repeat(80);
+    const bus = new MessageBus();
+    const adapter = new QQAdapter(bus, makeConfig(root).platform.qq, client);
+
+    await driveBusTurn(bus, adapter, qqMessage(), async function* () {
+      yield { type: "text_delta", text: longText };
+      yield { type: "turn_error", message: "处理失败：测试错误" };
+    });
+
+    expect(client.sent).toHaveLength(0);
+  });
+});
+
+class FakeFeishuChannel {
+  readonly sent: string[] = [];
+  readonly streams: Array<{ updates: FeishuCard[] }> = [];
+  private updateCount = 0;
+
+  constructor(
+    private readonly failStream = false,
+    private readonly failAfterUpdates = Number.POSITIVE_INFINITY
+  ) {}
+
+  async start(_onMessage: (message: FeishuInboundMessage) => Promise<void>): Promise<void> {}
+
+  async stop(): Promise<void> {}
+
+  async stream(
+    _initial: FeishuCard,
+    producer: (stream: FeishuCardStream) => Promise<void>,
+    _replyTo: string
+  ): Promise<void> {
+    const record = { updates: [] as FeishuCard[] };
+    this.streams.push(record);
+    await producer({
+      update: async (card) => {
+        if (this.failStream || this.updateCount >= this.failAfterUpdates) {
+          throw new Error("模拟流式发送失败");
+        }
+        this.updateCount += 1;
+        record.updates.push(card);
+      }
+    });
+  }
+
+  async send(_chatId: string, message: { text: string }): Promise<void> {
+    this.sent.push(message.text);
+  }
+}
+
+function feishuMessage(): FeishuInboundMessage {
+  return {
+    chatType: "p2p",
+    contentType: "text",
+    senderId: "user-1",
+    messageId: "message-1",
+    text: "你好",
+    chatId: "chat-1"
+  };
+}
+
+async function driveFeishuBusTurn(
+  bus: MessageBus,
+  adapter: FeishuAdapter,
+  message: FeishuInboundMessage,
+  respond: (inbound: InboundMessage) => AsyncIterable<AgentEvent>
+): Promise<void> {
+  const done = createDeferred<void>();
+  const unroute = bus.registerHandler("feishu", async (outbound) => {
+    if (outbound.event.type === "turn_done" || outbound.event.type === "turn_error") {
+      done.resolve(undefined);
+    }
+  });
+  const loopControl = createAgentLoopControl();
+  const agent = { respond, handleTurnDone: async () => {} } as unknown as Agent;
+  const runtime = new AgentRuntime(makeConfig(temporaryDirectory()), agent, bus);
+  const agentLoop = runtime.runLoop(loopControl);
+  const dispatchLoop = bus.dispatchHandlers();
+  try {
+    adapter.bindSendLoop();
+    await adapter.receiveMessage(message);
+    await done.promise;
+  } finally {
+    loopControl.stop();
+    await adapter.stop();
+    bus.close();
+    unroute();
+    await Promise.allSettled([agentLoop, dispatchLoop]);
+  }
+}
+
+describe("飞书适配", () => {
+  it("turn_error 时流式失败不发送降级补发", async () => {
+    const root = temporaryDirectory();
+    const channel = new FakeFeishuChannel(true);
+    const longText = "甲".repeat(80);
+    const bus = new MessageBus();
+    const config = makeConfig(root).platform.feishu;
+    config.allowedSenderIds = new Set(["user-1"]);
+    const adapter = new FeishuAdapter(bus, config, channel);
+
+    await driveFeishuBusTurn(bus, adapter, feishuMessage(), async function* () {
+      yield { type: "text_delta", text: longText };
+      yield { type: "turn_error", message: "处理失败：测试错误" };
+    });
+
+    expect(channel.sent).toHaveLength(0);
   });
 });

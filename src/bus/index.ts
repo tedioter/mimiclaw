@@ -1,8 +1,6 @@
 export {
   MessageBus,
   MessageBusClosedError,
-  type BusOutboundMessage,
   type InboundMessage,
-  type OutboundMessage,
-  type OutboundRouteHandler
+  type OutboundMessage
 } from "./message-bus.js";

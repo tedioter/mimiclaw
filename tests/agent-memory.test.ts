@@ -1,7 +1,8 @@
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Agent } from "../src/agent/agent.js";
-import { AgentRuntime } from "../src/app/bootstrap.js";
+import { buildPromptContext } from "../src/agent/prompt.js";
+import { AgentRuntime } from "../src/app/runtime.js";
 import { MessageBus } from "../src/bus/message-bus.js";
 import type { Model, ModelEvent, ModelMessage } from "../src/model/index.js";
 import { MemoryStoreError } from "../src/types/errors.js";
@@ -79,7 +80,7 @@ async function commitConsumedTurn(agent: Agent, text: string, events: AgentEvent
   if (!done) {
     throw new Error("测试轮次没有完成事件");
   }
-  await agent.handleTurnEnd({ platform: "cli", text }, done.text);
+  await agent.handleTurnDone({ platform: "cli", text }, done.text);
 }
 
 function readErrorLogs(spy: ReturnType<typeof vi.spyOn>): Record<string, unknown>[] {
@@ -116,10 +117,11 @@ describe("Agent 记忆", () => {
 
     try {
       await memory.longTerm.replaceMemory("更新后的记忆");
-      await agent.handleTurnEnd({ platform: "cli", text: "当前问题" }, "当前回答");
+      await agent.handleTurnDone({ platform: "cli", text: "当前问题" }, "当前回答");
 
-      expect(agent.readPromptContext().prompt).toContain("更新后的记忆");
-      expect(agent.readPromptContext().messages).toEqual(
+      const promptContext = buildPromptContext(memory);
+      expect(promptContext.prompt).toContain("更新后的记忆");
+      expect(promptContext.messages).toEqual(
         expect.arrayContaining([
           { role: "user", content: "当前问题" },
           { role: "assistant", content: "当前回答" }
@@ -239,7 +241,7 @@ describe("Agent 记忆", () => {
       if (!done) {
         throw new Error("测试轮次没有完成事件");
       }
-      await agent.handleTurnEnd({ platform: "cli", text: "测试记忆故障" }, done.text);
+      await agent.handleTurnDone({ platform: "cli", text: "测试记忆故障" }, done.text);
       expect(readErrorLogs(errors)).toContainEqual(
         expect.objectContaining({ type: "memory_commit_error", errorName: "MemoryStoreError" })
       );

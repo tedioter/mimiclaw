@@ -5,7 +5,9 @@ import { LongTermMemory, Memory, ShortTermMemory } from "../src/memory/index.js"
 import { ToolRegistry } from "../src/tools/toolregistry.js";
 import { Tool } from "../src/tools/base.js";
 import { buildTurnId } from "../src/utils/turn-id.js";
+import { ModelError } from "../src/types/errors.js";
 import type { AgentEvent } from "../src/types/events.js";
+import type { Model, ModelEvent } from "../src/model/index.js";
 import {
   FakeModel,
   cleanupTemporaryDirectories,
@@ -185,7 +187,7 @@ describe("Agent 工具循环", () => {
     if (!done) {
       throw new Error("测试轮次没有完成事件");
     }
-    await agent.handleTurnEnd({ platform: "cli", text: "执行" }, done.text);
+    await agent.handleTurnDone({ platform: "cli", text: "执行" }, done.text);
     expect(state.count).toBe(2);
     expect(events.filter((event) => event.type === "tool_intent")).toHaveLength(2);
     expect(memory.shortTerm.loadState().turns[0]?.assistant).toBe("已执行两次。");
@@ -252,6 +254,26 @@ describe("Agent 工具循环", () => {
       info.mockRestore();
       errors.mockRestore();
     }
+  });
+
+  it("模型流中断时保留已发出的 partial 并 turn_done", async () => {
+    const root = temporaryDirectory();
+    const model: Model = {
+      async *streamChat(): AsyncIterable<ModelEvent> {
+        yield { type: "model_text_delta", text: "部分" };
+        throw new ModelError("流式中断");
+      },
+      async close(): Promise<void> {}
+    };
+    const agent = createTestAgent(model, createMemory(root), new ToolRegistry([]));
+    const events: AgentEvent[] = [];
+    for await (const event of agent.respond({ platform: "cli", text: "你好" })) {
+      events.push(event);
+    }
+    expect(events).toEqual([
+      { type: "text_delta", text: "部分" },
+      { type: "turn_done", text: "部分" }
+    ]);
   });
 });
 

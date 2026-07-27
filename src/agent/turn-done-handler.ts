@@ -6,6 +6,7 @@ import {
 } from "../memory/compress-context.js";
 import type { Memory } from "../memory/memory.js";
 import { summarizeLogText, writeLog } from "../utils/log.js";
+import { buildTurnId } from "../utils/turn-id.js";
 import type { Model, ModelMessage } from "../model/index.js";
 
 async function collectModelText(model: Model, messages: ModelMessage[]): Promise<string> {
@@ -64,13 +65,23 @@ async function compressContextIfNeeded(
   }
 }
 
-export async function handleTurnEnd(
+/** turn_done 后的记忆压缩与短期记忆写入。 */
+export async function turnDoneHandler(
   model: Model,
   memory: Memory,
   inbound: InboundMessage,
-  assistantReply: string,
-  turnId: string
+  assistantReply: string
 ): Promise<void> {
+  const turnId = buildTurnId(inbound);
   await compressContextIfNeeded(model, memory, turnId);
-  await memory.shortTerm.append(inbound.text, assistantReply, inbound.platform);
+  try {
+    await memory.shortTerm.append(inbound.text, assistantReply, inbound.platform);
+  } catch (error) {
+    writeLog("error", "memory", {
+      turnId,
+      type: "memory_commit_error",
+      errorName: errorName(error),
+      content: summarizeLogText(errorMessage(error))
+    });
+  }
 }

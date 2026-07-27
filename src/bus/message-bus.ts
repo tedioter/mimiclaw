@@ -1,28 +1,21 @@
 import type { AgentEvent } from "../types/events.js";
 
+/** 平台 → Agent */
 export type InboundMessage = {
   platform: string;
   text: string;
   messageId?: string;
 };
 
-/** 平台发送的纯文本出站消息（分片、降级发送等）。 */
+/** Agent → 平台（Agent 事件流） */
 export type OutboundMessage = {
-  platform: string;
-  text: string;
-  replyTo?: string;
-  final?: boolean;
-};
-
-/** Bus 上携带 Agent 事件的出站消息。 */
-export type BusOutboundMessage = {
   platform: string;
   event: AgentEvent;
   messageId?: string;
 };
 
 /** 某条 platform 路由上的出站处理函数。 */
-export type OutboundRouteHandler = (message: BusOutboundMessage) => void | Promise<void>;
+type OutboundRouteHandler = (message: OutboundMessage) => void | Promise<void>;
 
 export class MessageBusClosedError extends Error {
   constructor() {
@@ -39,13 +32,13 @@ type Waiter<T> = {
 export class MessageBus {
   private readonly inboundQueue: InboundMessage[] = [];
   private readonly inboundWaiters: Array<Waiter<InboundMessage>> = [];
-  private readonly outboundQueue: BusOutboundMessage[] = [];
-  private readonly outboundWaiters: Array<Waiter<BusOutboundMessage>> = [];
+  private readonly outboundQueue: OutboundMessage[] = [];
+  private readonly outboundWaiters: Array<Waiter<OutboundMessage>> = [];
   /** platform → 该平台的出站路由处理函数列表。 */
   private readonly outboundRoutes = new Map<string, OutboundRouteHandler[]>();
   private closed = false;
 
-  publishInbound(message: InboundMessage): void {
+  publishInboundMessage(message: InboundMessage): void {
     if (this.closed) {
       return;
     }
@@ -57,11 +50,10 @@ export class MessageBus {
     this.inboundQueue.push(message);
   }
 
-  consumeInbound(): Promise<InboundMessage> {
+  consumeInboundMessage(): Promise<InboundMessage> {
     if (this.closed) {
       return Promise.reject(new MessageBusClosedError());
     }
-    //.shift()这个方法在数组中移除第一个元素，并返回被移除的元素。
     const queued = this.inboundQueue.shift();
     if (queued) {
       return Promise.resolve(queued);
@@ -71,7 +63,7 @@ export class MessageBus {
     });
   }
 
-  publishOutbound(message: BusOutboundMessage): void {
+  publishOutboundMessage(message: OutboundMessage): void {
     if (this.closed) {
       return;
     }
@@ -83,7 +75,7 @@ export class MessageBus {
     this.outboundQueue.push(message);
   }
 
-  private waitOutbound(): Promise<BusOutboundMessage> {
+  private waitOutboundMessage(): Promise<OutboundMessage> {
     if (this.closed) {
       return Promise.reject(new MessageBusClosedError());
     }
@@ -118,9 +110,9 @@ export class MessageBus {
 
   async dispatchHandlers(): Promise<void> {
     while (!this.closed) {
-      let message: BusOutboundMessage;
+      let message: OutboundMessage;
       try {
-        message = await this.waitOutbound();
+        message = await this.waitOutboundMessage();
       } catch (error) {
         if (error instanceof MessageBusClosedError) {
           return;

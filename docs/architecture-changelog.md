@@ -161,6 +161,46 @@ new Agent(model, memory, tools);
 - 运行时模型切换与 Anthropic 原生 API 适配仍未实现。
 - 仅支持旧版 HTTP+SSE、不支持 Streamable HTTP 的 MCP 服务可能无法连接。
 
+## 2026-07-27：Runtime 内聚 Agent 循环，总线与平台出站分离
+
+### 背景
+
+上一版仍保留独立的 `agent-runner` 与 `loadRuntime`；`MessageBus` 的 `OutboundMessage` 同时承载 Agent 事件与平台纯文本，命名 `turn_end`/`turn_done` 不一致；流式失败降级可能重复或误补全文。
+
+### 变更
+
+#### 1. AgentRuntime 接管循环
+
+- 删除 `src/app/agent-runner.ts`；`AgentRuntime.runLoop()` 消费入站消息、驱动 `agent.respond()`、按 display 过滤出站事件。
+- `turn_done` 后调用 `agent.handleTurnDone()`；`createRuntime()` 取代 `loadRuntime()`，运行时组装留在 `src/app/runtime.ts`。
+- `shouldShowEvent()` 取代 `shouldPublishAgentEvent()`。
+
+#### 2. turn_done 命名与 handler 统一
+
+- `handleTurnEnd` / `turn-end-handler` 更名为 `handleTurnDone` / `turn-done-handler`。
+- 记忆写入与压缩错误在 `turnDoneHandler()` 内记录日志，不向上抛出。
+
+#### 3. MessageBus 出站语义澄清
+
+- `OutboundMessage` 仅表示 Agent → 平台的事件流（含 `AgentEvent`）。
+- 平台对外 API 纯文本改为 `PlatformTextMessage`；总线方法统一带 `Message` 后缀（`publishInboundMessage` 等）。
+- 删除 `BusOutboundMessage` 导出。
+
+#### 4. 流式降级与 Agent 容错
+
+- 飞书/QQ 用 `remainingFinalAnswer` / `remainingAfterStreamFailure` 按已成功发出的 plain 补差；仅 `turn_done` 终端触发降级补发。
+- Agent 推理异常时若已有部分 `text_delta`，仍 yield `turn_done` 以便记忆提交；助手日志单独放宽截断上限（`summarizeAssistantReplyLog`）。
+
+### 影响
+
+- 对外：`loadRuntime` → `createRuntime`；总线与 `handleTurnEnd` → `handleTurnDone`。
+- 测试：`agent-runner.test.ts` 迁移为 `runtime.test.ts`。
+- `bootstrap.ts` 仅负责平台启动，re-export `createRuntime` 与 `AgentRuntime`。
+
+### 暂未解决的问题
+
+- 运行时模型切换与 Anthropic 原生 API 适配仍未实现。
+
 ## 后续记录格式
 
 提交架构相关改动时，在**同一次 commit** 中追加章节，结构如下：

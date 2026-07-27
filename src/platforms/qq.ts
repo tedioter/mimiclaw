@@ -4,14 +4,21 @@ import {
   type ReplyTarget,
   type StreamSession
 } from "@tencent-connect/qqbot-nodejs";
-import type { BusOutboundMessage, MessageBus, OutboundMessage } from "../bus/message-bus.js";
+import type { MessageBus, OutboundMessage } from "../bus/message-bus.js";
 import type { QQConfig } from "../config/types.js";
 import { ConfigError, PlatformError, errorMessage, errorName } from "../types/errors.js";
 import type { AgentEvent } from "../types/events.js";
 import { createDeferred, withTimeout } from "../utils/async.js";
 import { writeLog } from "../utils/log.js";
 import { takeSplitChunk } from "../utils/message-splitter.js";
-import { MessageDeduper, PlatformAdapter, finalAnswerSuffix, isActorAllowed } from "./base.js";
+import {
+  MessageDeduper,
+  PlatformAdapter,
+  remainingAfterStreamFailure,
+  remainingFinalAnswer,
+  isActorAllowed,
+  type PlatformTextMessage
+} from "./base.js";
 
 export type QQInboundMessage = {
   kind: "c2c" | "group" | "guild" | "dm";
@@ -44,7 +51,7 @@ export class QQStreamSession {
 
   private pending: string[] = [];
   private pendingAnswerLength = 0;
-  private sentAnswerLength = 0;
+  private sentPlainAnswer = "";
   private answerParts: string[] = [];
   private phase: "thinking" | "answer" | undefined;
   private started = false;
@@ -99,6 +106,7 @@ export class QQStreamSession {
       }
       // 工具轮旁白不计入最终回答，避免 turn_done 补发时重复拼接。
       this.answerParts = [];
+      this.sentPlainAnswer = "";
       this.phase = undefined;
       this.pending.push(`\n\n> 工具调用：${event.toolName}：${event.intent}\n\n`);
       await this.flush();
@@ -106,12 +114,13 @@ export class QQStreamSession {
       this.pending.push(`\n\n${event.message}`);
       await this.finish();
     } else if (event.type === "turn_done") {
-      const suffix = finalAnswerSuffix(this.answerParts.join(""), event.text);
+      const suffix = remainingFinalAnswer(this.answerParts.join(""), event.text);
       if (suffix) {
         this.pending.push(suffix);
         this.pendingAnswerLength += suffix.length;
       }
       await this.finish();
+      this.sentPlainAnswer = event.text;
     }
   }
 
@@ -129,37 +138,41 @@ export class QQStreamSession {
     if (!text) {
       return;
     }
-    const answerLength = this.pendingAnswerLength;
     this.pending = [];
     this.pendingAnswerLength = 0;
+    const answerSnapshot = this.answerParts.join("");
     await this.sendStream(text, false);
-    this.sentAnswerLength += answerLength;
+    this.sentPlainAnswer = answerSnapshot;
     this.started = true;
     this.lastSentAt = Date.now();
   }
 
   private async finish(): Promise<void> {
     const text = this.pending.join("");
-    const answerLength = this.pendingAnswerLength;
     this.pending = [];
     this.pendingAnswerLength = 0;
     if (!this.started && text.length <= this.maxLength) {
       await this.sendStatic(text || "任务已处理完成。");
+      if (this.answerParts.length) {
+        this.sentPlainAnswer = this.answerParts.join("");
+      }
     } else {
+      const answerSnapshot = this.answerParts.join("");
       await this.sendStream(text, true);
-      this.sentAnswerLength += answerLength;
+      this.sentPlainAnswer = answerSnapshot;
     }
     this.closed = true;
   }
 
-  getSentAnswerLength(): number {
-    return this.sentAnswerLength;
+  /** 已通过流式通道成功发出的最终回答 plain 文本（不含思考块与工具行）。 */
+  getSentPlainAnswer(): string {
+    return this.sentPlainAnswer;
   }
-}
 
-function buildFallbackAnswer(streamedText: string, finalText: string): string {
-  const suffix = finalAnswerSuffix(streamedText, finalText);
-  return streamedText + suffix;
+  /** 当前轮已收到的最终回答 plain 文本（text_delta 累计，不含思考块与工具行）。 */
+  getComposedPlainAnswer(): string {
+    return this.answerParts.join("");
+  }
 }
 
 type QQSendContext = {
@@ -167,8 +180,8 @@ type QQSendContext = {
   replyTarget: ReplyTarget;
   streamSender: QQSdkStreamSender;
   session: QQStreamSession;
-  streamedParts: string[];
   finalText: string;
+  terminalKind?: "turn_done" | "turn_error";
   streamError?: unknown;
 };
 
@@ -422,24 +435,28 @@ export class QQAdapter extends PlatformAdapter {
       session: new QQStreamSession(
         (content, final) => streamSender.push(content, final),
         (content) =>
-          QQAdapter.sendWithRetry(
-            (current) => client.sendMessage(message.replyTarget, current),
-            content
+          PlatformAdapter.sendPlatformText(
+            (outbound) =>
+              QQAdapter.sendWithRetry(
+                (current) => client.sendMessage(message.replyTarget, current),
+                outbound.text
+              ),
+            { platform: this.name, text: content },
+            this.config.maxMessageLength
           ),
         this.config.maxMessageLength
       ),
-      streamedParts: [],
       finalText: ""
     };
     this.sendContexts.set(message.messageId, context);
-    this.bus.publishInbound({
+    this.bus.publishInboundMessage({
       platform: "qq",
       text,
       messageId: message.messageId
     });
   }
 
-  private async handleOutbound(message: BusOutboundMessage): Promise<void> {
+  private async handleOutbound(message: OutboundMessage): Promise<void> {
     if (!message.messageId) {
       return;
     }
@@ -448,12 +465,12 @@ export class QQAdapter extends PlatformAdapter {
       return;
     }
     const event = message.event;
-    if (event.type === "text_delta") {
-      context.streamedParts.push(event.text);
-    } else if (event.type === "turn_done") {
+    if (event.type === "turn_done") {
       context.finalText = event.text;
+      context.terminalKind = "turn_done";
     } else if (event.type === "turn_error") {
       context.finalText = event.message;
+      context.terminalKind = "turn_error";
     }
     if (!context.streamError) {
       try {
@@ -478,6 +495,9 @@ export class QQAdapter extends PlatformAdapter {
     if (!client) {
       return;
     }
+    if (context.terminalKind !== "turn_done") {
+      return;
+    }
     writeLog("error", "platform", {
       platform: this.name,
       type: "qq_stream_error",
@@ -485,19 +505,21 @@ export class QQAdapter extends PlatformAdapter {
       errorName: errorName(context.streamError),
       content: errorMessage(context.streamError)
     });
-    const streamedText = context.streamedParts.join("");
-    const completeAnswer = buildFallbackAnswer(streamedText, context.finalText);
-    const remainingAnswer = completeAnswer.slice(context.session.getSentAnswerLength());
-    if (!remainingAnswer) {
+    const remainingAnswer = remainingAfterStreamFailure(
+      context.session.getSentPlainAnswer(),
+      context.session.getComposedPlainAnswer(),
+      context.finalText
+    );
+    if (!remainingAnswer.trim()) {
       return;
     }
-    const fallback: OutboundMessage = {
+    const fallback: PlatformTextMessage = {
       platform: this.name,
       text: `[流式回复中断，以下为剩余回复]\n\n${remainingAnswer || "处理失败：没有生成可发送的回复。"}`,
       final: true
     };
     try {
-      await PlatformAdapter.sendOutbound(
+      await PlatformAdapter.sendPlatformText(
         (outbound) => client.sendMessage(context.replyTarget, outbound.text),
         fallback,
         this.config.maxMessageLength

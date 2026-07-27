@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import type { BusOutboundMessage } from "../bus/message-bus.js";
+import type { OutboundMessage } from "../bus/message-bus.js";
 import type { MessageBus } from "../bus/message-bus.js";
 import type { AgentEvent } from "../types/events.js";
 import { PlatformAdapter } from "./base.js";
@@ -78,11 +78,11 @@ export class CliAdapter extends PlatformAdapter {
     const messageId = crypto.randomUUID();
     return new Promise((resolve) => {
       this.turnWaiters.set(messageId, { resolve });
-      this.bus.publishInbound({ platform: "cli", text, messageId });
+      this.bus.publishInboundMessage({ platform: "cli", text, messageId });
     });
   }
 
-  private handleOutbound(message: BusOutboundMessage): void {
+  private handleOutbound(message: OutboundMessage): void {
     this.renderEvent(message.event);
     if (message.event.type !== "turn_done" && message.event.type !== "turn_error") {
       return;

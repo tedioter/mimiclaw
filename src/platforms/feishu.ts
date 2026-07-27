@@ -1,13 +1,20 @@
 import * as lark from "@larksuiteoapi/node-sdk";
 import crypto from "node:crypto";
-import type { BusOutboundMessage, MessageBus, OutboundMessage } from "../bus/message-bus.js";
+import type { MessageBus, OutboundMessage } from "../bus/message-bus.js";
 import type { FeishuConfig } from "../config/types.js";
 import { ConfigError, PlatformError, errorMessage, errorName } from "../types/errors.js";
 import type { AgentEvent } from "../types/events.js";
 import { createDeferred, withTimeout } from "../utils/async.js";
 import { writeLog } from "../utils/log.js";
 import { isRecord } from "../utils/type-guards.js";
-import { MessageDeduper, PlatformAdapter, finalAnswerSuffix, isActorAllowed } from "./base.js";
+import {
+  MessageDeduper,
+  PlatformAdapter,
+  remainingAfterStreamFailure,
+  remainingFinalAnswer,
+  isActorAllowed,
+  type PlatformTextMessage
+} from "./base.js";
 
 export type FeishuCard = Record<string, unknown>;
 
@@ -32,7 +39,7 @@ interface FeishuChannelLike {
     producer: (stream: FeishuCardStream) => Promise<void>,
     replyTo: string
   ): Promise<void>;
-  send(chatId: string, message: OutboundMessage): Promise<void>;
+  send(chatId: string, message: PlatformTextMessage): Promise<void>;
 }
 
 type ToolInvocation = {
@@ -90,6 +97,7 @@ export class FeishuCardBuffer {
       if (!this.done && wait > 0) {
         await new Promise<void>((resolve) => setTimeout(resolve, wait));
       }
+      // 等待 minInterval 后再取一次：吞掉间隔内积压的更新，只发最新卡片，减少 API 调用。
       const newest = this.takeLatest();
       if (newest) {
         await stream.update(newest());
@@ -109,6 +117,21 @@ export class FeishuStreamComposer {
   readonly answerParts: string[] = [];
   readonly tools: ToolInvocation[] = [];
   private phase?: "thinking" | "answer";
+  private publishedPlainAnswer = "";
+  finalText = "";
+
+  /** 记录最近一次成功排队发布的最终回答 plain 前缀。 */
+  markPublished(): void {
+    this.publishedPlainAnswer = this.answerParts.join("");
+  }
+
+  getSentPlainAnswer(): string {
+    return this.publishedPlainAnswer;
+  }
+
+  getComposedPlainAnswer(): string {
+    return this.answerParts.join("");
+  }
 
   get text(): string {
     const answer = this.parts.join("");
@@ -171,12 +194,15 @@ export class FeishuStreamComposer {
     } else if (event.type === "tool_intent") {
       // 工具轮旁白不计入最终回答，避免 turn_done 补发时重复拼接。
       this.answerParts.length = 0;
+      this.publishedPlainAnswer = "";
       delete this.phase;
       this.tools.push({ name: event.toolName, intent: event.intent });
     } else if (event.type === "turn_error") {
+      this.finalText = event.message;
       pieces.push(`\n\n${event.message}`);
     } else if (event.type === "turn_done") {
-      const suffix = finalAnswerSuffix(this.answerParts.join(""), event.text);
+      this.finalText = event.text;
+      const suffix = remainingFinalAnswer(this.answerParts.join(""), event.text);
       if (suffix) {
         pieces.push(suffix);
       }
@@ -304,7 +330,7 @@ class FeishuOfficialChannel implements FeishuChannelLike {
     });
   }
 
-  async send(chatId: string, message: OutboundMessage): Promise<void> {
+  async send(chatId: string, message: PlatformTextMessage): Promise<void> {
     const content = JSON.stringify({ text: message.text });
     const result = message.replyTo
       ? await this.client.im.message.reply({
@@ -339,6 +365,7 @@ export class FeishuAdapter extends PlatformAdapter {
       composer: FeishuStreamComposer;
       buffer: FeishuCardBuffer;
       streamTask: Promise<void>;
+      terminalKind?: "turn_done" | "turn_error";
       streamError?: unknown;
     }
   >();
@@ -413,14 +440,14 @@ export class FeishuAdapter extends PlatformAdapter {
         context.streamError = error;
       });
     this.sendContexts.set(message.messageId, context);
-    this.bus.publishInbound({
+    this.bus.publishInboundMessage({
       platform: "feishu",
       text,
       messageId: message.messageId
     });
   }
 
-  private async handleOutbound(message: BusOutboundMessage): Promise<void> {
+  private async handleOutbound(message: OutboundMessage): Promise<void> {
     if (!message.messageId) {
       return;
     }
@@ -428,7 +455,13 @@ export class FeishuAdapter extends PlatformAdapter {
     if (!context) {
       return;
     }
+    if (message.event.type === "turn_done") {
+      context.terminalKind = "turn_done";
+    } else if (message.event.type === "turn_error") {
+      context.terminalKind = "turn_error";
+    }
     if (context.composer.consume(message.event)) {
+      context.composer.markPublished();
       context.buffer.publish(() => context.composer.card());
     }
     if (message.event.type !== "turn_done" && message.event.type !== "turn_error") {
@@ -444,6 +477,7 @@ export class FeishuAdapter extends PlatformAdapter {
       composer: FeishuStreamComposer;
       buffer: FeishuCardBuffer;
       streamTask: Promise<void>;
+      terminalKind?: "turn_done" | "turn_error";
       streamError?: unknown;
     }
   ): Promise<void> {
@@ -451,7 +485,7 @@ export class FeishuAdapter extends PlatformAdapter {
     context.buffer.finish();
     await context.streamTask;
     const streamError = context.streamError;
-    if (!streamError) {
+    if (!streamError || context.terminalKind !== "turn_done") {
       return;
     }
     const channel = this.channel;
@@ -465,14 +499,22 @@ export class FeishuAdapter extends PlatformAdapter {
       errorName: errorName(streamError),
       content: errorMessage(streamError)
     });
-    const fallback: OutboundMessage = {
+    const remainingAnswer = remainingAfterStreamFailure(
+      context.composer.getSentPlainAnswer(),
+      context.composer.getComposedPlainAnswer(),
+      context.composer.finalText || context.composer.getComposedPlainAnswer()
+    );
+    if (!remainingAnswer.trim()) {
+      return;
+    }
+    const fallback: PlatformTextMessage = {
       platform: this.name,
-      text: `[流式回复中断，以下为完整回复]\n\n${context.composer.text || "处理失败：没有生成可发送的回复。"}`,
+      text: `[流式回复中断，以下为剩余回复]\n\n${remainingAnswer}`,
       replyTo: messageId,
       final: true
     };
     try {
-      await PlatformAdapter.sendOutbound(
+      await PlatformAdapter.sendPlatformText(
         (outbound) => channel.send(context.chatId, outbound),
         fallback,
         this.config.maxMessageLength

@@ -3,7 +3,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { MemoryStoreError } from "../src/types/errors.js";
 import { parseContextCompressionResult } from "../src/memory/compress-context.js";
-import { buildPrompt } from "../src/agent/prompt.js";
+import { buildPromptContext } from "../src/agent/prompt.js";
 import { LongTermMemory, Memory, ShortTermMemory } from "../src/memory/index.js";
 import { cleanupTemporaryDirectories, temporaryDirectory } from "./test-helpers.js";
 
@@ -55,10 +55,9 @@ describe("透明记忆", () => {
         }
       ]
     });
-    const messages = buildPrompt(memory, "继续");
-    const systemPrompt = String(messages[0]?.content);
-    expect(systemPrompt).toContain("之前聊过工作区路径");
-    expect(memory.shortTerm.asMessages()).toHaveLength(2);
+    const promptContext = buildPromptContext(memory);
+    expect(promptContext.prompt).toContain("之前聊过工作区路径");
+    expect(promptContext.messages).toHaveLength(2);
   });
 
   it("SOUL 与 USER 分别注入 system prompt", async () => {
@@ -68,9 +67,8 @@ describe("透明记忆", () => {
     fs.writeFileSync(path.join(dataDir, "SOUL.md"), "助手人格\n");
     fs.writeFileSync(path.join(dataDir, "USER.md"), "用户偏好\n");
     const memory = createMemory(dataDir);
-    const systemPrompt = String(buildPrompt(memory, "继续")[0]?.content);
-    expect(systemPrompt).toContain("<soul>\n助手人格\n</soul>");
-    expect(systemPrompt).toContain("<user>\n用户偏好\n</user>");
+    expect(buildPromptContext(memory).prompt).toContain("<soul>\n助手人格\n</soul>");
+    expect(buildPromptContext(memory).prompt).toContain("<user>\n用户偏好\n</user>");
   });
 
   it("损坏时拒绝覆盖近期记忆", async () => {

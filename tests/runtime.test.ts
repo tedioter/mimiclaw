@@ -1,16 +1,21 @@
 import { describe, expect, it } from "vitest";
+import type { Agent } from "../src/agent/agent.js";
+import { AgentRuntime, createAgentLoopControl, shouldShowEvent } from "../src/app/runtime.js";
 import { MessageBus } from "../src/bus/message-bus.js";
-import {
-  createAgentLoopControl,
-  runAgentLoop,
-  shouldPublishAgentEvent
-} from "../src/app/agent-runner.js";
 import type { InboundMessage } from "../src/bus/message-bus.js";
 import type { AgentEvent } from "../src/types/events.js";
 import { createDeferred } from "../src/utils/async.js";
+import { makeConfig, temporaryDirectory } from "./test-helpers.js";
+
+function mockAgent(
+  respond: (inbound: InboundMessage) => AsyncIterable<AgentEvent>,
+  handleTurnDone: Agent["handleTurnDone"] = async () => {}
+): Agent {
+  return { respond, handleTurnDone } as Agent;
+}
 
 describe("Agent 应用层运行循环", () => {
-  it("收到完成事件后把最终回复交给 App 层提交", async () => {
+  it("收到 turn_done 后提交轮次记忆", async () => {
     const bus = new MessageBus();
     const control = createAgentLoopControl();
     const inbound: InboundMessage = {
@@ -27,19 +32,21 @@ describe("Agent 应用层运行循环", () => {
         published.resolve();
       }
     });
-    const responder = {
-      async *respond(_inbound: InboundMessage): AsyncIterable<AgentEvent> {
+    const agent = mockAgent(
+      async function* respond(_inbound: InboundMessage): AsyncIterable<AgentEvent> {
         yield { type: "text_delta", text: "你好，" };
         yield { type: "turn_done", text: "你好，很高兴认识你。" };
+      },
+      async (received, assistantReply) => {
+        committed.resolve({ inbound: received, assistantReply });
       }
-    };
-    const agentTask = runAgentLoop(responder, bus, control, async (received, assistantReply) => {
-      committed.resolve({ inbound: received, assistantReply });
-    });
+    );
+    const runtime = new AgentRuntime(makeConfig(temporaryDirectory()), agent, bus);
+    const agentTask = runtime.runLoop(control);
     const dispatchTask = bus.dispatchHandlers();
 
     try {
-      bus.publishInbound(inbound);
+      bus.publishInboundMessage(inbound);
       await expect(committed.promise).resolves.toEqual({
         inbound,
         assistantReply: "你好，很高兴认识你。"
@@ -53,6 +60,41 @@ describe("Agent 应用层运行循环", () => {
       control.stop();
       bus.close();
       unregister();
+      await Promise.allSettled([agentTask, dispatchTask]);
+    }
+  });
+
+  it("partial turn_done 仍提交轮次记忆", async () => {
+    const bus = new MessageBus();
+    const control = createAgentLoopControl();
+    const inbound: InboundMessage = {
+      platform: "cli",
+      text: "你好",
+      messageId: "message-partial"
+    };
+    const committed = createDeferred<{ inbound: InboundMessage; assistantReply: string }>();
+    const agent = mockAgent(
+      async function* respond(_inbound: InboundMessage): AsyncIterable<AgentEvent> {
+        yield { type: "text_delta", text: "部分" };
+        yield { type: "turn_done", text: "部分" };
+      },
+      async (received, assistantReply) => {
+        committed.resolve({ inbound: received, assistantReply });
+      }
+    );
+    const runtime = new AgentRuntime(makeConfig(temporaryDirectory()), agent, bus);
+    const agentTask = runtime.runLoop(control);
+    const dispatchTask = bus.dispatchHandlers();
+
+    try {
+      bus.publishInboundMessage(inbound);
+      await expect(committed.promise).resolves.toEqual({
+        inbound,
+        assistantReply: "部分"
+      });
+    } finally {
+      control.stop();
+      bus.close();
       await Promise.allSettled([agentTask, dispatchTask]);
     }
   });
@@ -73,22 +115,22 @@ describe("Agent 应用层运行循环", () => {
         published.resolve();
       }
     });
-    const responder = {
-      async *respond(_inbound: InboundMessage): AsyncIterable<AgentEvent> {
-        yield { type: "thinking_delta", text: "先想一下。" };
-        yield { type: "tool_intent", toolName: "read", intent: "读取文件" };
-        yield { type: "text_delta", text: "完成。" };
-        yield { type: "turn_done", text: "完成。" };
-      }
-    };
-    const agentTask = runAgentLoop(responder, bus, control, undefined, {
-      showThinking: false,
-      showToolCalls: false
+    const agent = mockAgent(async function* respond(
+      _inbound: InboundMessage
+    ): AsyncIterable<AgentEvent> {
+      yield { type: "thinking_delta", text: "先想一下。" };
+      yield { type: "tool_intent", toolName: "read", intent: "读取文件" };
+      yield { type: "text_delta", text: "完成。" };
+      yield { type: "turn_done", text: "完成。" };
     });
+    const config = makeConfig(temporaryDirectory());
+    config.display = { showThinking: false, showToolCalls: false };
+    const runtime = new AgentRuntime(config, agent, bus);
+    const agentTask = runtime.runLoop(control);
     const dispatchTask = bus.dispatchHandlers();
 
     try {
-      bus.publishInbound(inbound);
+      bus.publishInboundMessage(inbound);
       await published.promise;
       expect(events).toEqual([
         { type: "text_delta", text: "完成。" },
@@ -103,22 +145,22 @@ describe("Agent 应用层运行循环", () => {
   });
 });
 
-describe("shouldPublishAgentEvent", () => {
+describe("shouldShowEvent", () => {
   it("按 display 开关决定是否发布思考与工具意图", () => {
     expect(
-      shouldPublishAgentEvent(
+      shouldShowEvent(
         { type: "thinking_delta", text: "x" },
         { showThinking: false, showToolCalls: true }
       )
     ).toBe(false);
     expect(
-      shouldPublishAgentEvent(
+      shouldShowEvent(
         { type: "tool_intent", toolName: "read", intent: "读取" },
         { showThinking: true, showToolCalls: false }
       )
     ).toBe(false);
     expect(
-      shouldPublishAgentEvent(
+      shouldShowEvent(
         { type: "text_delta", text: "ok" },
         { showThinking: false, showToolCalls: false }
       )
