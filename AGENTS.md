@@ -19,14 +19,14 @@
    - `npm run format:check`
    - `npm run build`
 4. 检查 `git diff`、`git diff --check` 和 `git status`，确认没有误提交的配置、密钥或无关文件。
-5. 验证通过后创建 Git 提交。若本次提交改变了模块职责、依赖关系、数据流或运行流程，**在同一次 commit 中**更新 [`docs/architecture-changelog.md`](docs/architecture-changelog.md)：新增一章，写清**相对上一提交**的架构差异；开发过程中不要提前写入未提交章节。
+5. 验证通过后，**先向用户确认再提交**：说明 staging 范围、commit message（及架构 changelog 是否需更新），**未经用户明确同意不得执行 `git commit`**。若本次提交改变了模块职责、依赖关系、数据流或运行流程，**在同一次 commit 中**更新 [`docs/architecture-changelog.md`](docs/architecture-changelog.md)：新增一章，写清**相对上一提交**的架构差异；开发过程中不要提前写入未提交章节。
 6. 提交信息使用中文，并遵循 Conventional Commits 前缀，例如 `feat:`、`fix:`、`refactor:`、`docs:`。标题一行概括「为什么改」，正文补充关键影响；示例：
    ```
    refactor(agent): 从 memory 派生上下文并统一轮次结束处理
 
    移除 AgentContext，Agent 仅依赖 model、memory、tools；turn_done 后由 turnDoneHandler 写入记忆。
    ```
-7. 提交成功后推送到 `origin` 当前分支（`git push`），确保远程与本地一致。
+7. 用户确认并完成提交后，推送到 `origin` 当前分支（`git push`），确保远程与本地一致。
 
 ## Agent 相关边界
 

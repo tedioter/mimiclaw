@@ -22,7 +22,7 @@
     "@tencent-connect/qqbot-nodejs": "^1.0.4",
     "cheerio": "^1.2.0",
     "fast-glob": "^3.3.3",
-    "openai": "^5.12.2",
+    "openai": "^6.7.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
