@@ -26,6 +26,7 @@
 
    移除 AgentContext，Agent 仅依赖 model、memory、tools；turn_done 后由 turnDoneHandler 写入记忆。
    ```
+7. 提交成功后推送到 `origin` 当前分支（`git push`），确保远程与本地一致。
 
 ## Agent 相关边界
 
