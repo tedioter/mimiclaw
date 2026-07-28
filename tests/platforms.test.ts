@@ -249,36 +249,34 @@ function qqMessage(): QQInboundMessage {
 function qqModelControl() {
   const models = [
     {
-      id: "deepseek/main-model",
       vendorId: "deepseek",
       vendorName: "DeepSeek",
       model: "main-model",
       baseUrl: "https://main.example.com",
-      active: true
+      current: true
     },
     {
-      id: "deepseek/fast-model",
       vendorId: "deepseek",
       vendorName: "DeepSeek",
       model: "fast-model",
       baseUrl: "https://fast.example.com",
-      active: false
+      current: false
     }
   ];
-  let activeId = "deepseek/main-model";
+  let currentModel = "main-model";
   return {
     listVendors: () => [
-      { id: "deepseek", name: "DeepSeek", modelCount: models.length, active: true }
+      { id: "deepseek", name: "DeepSeek", modelCount: models.length, current: true }
     ],
     listModels: (vendorId?: string) =>
       models
         .filter((item) => !vendorId || item.vendorId === vendorId)
-        .map((item) => ({ ...item, active: item.id === activeId })),
-    switchModel: (id: string): void => {
-      if (!models.some((item) => item.id === id)) {
-        throw new Error(`未知模型 runtime：${id}`);
+        .map((item) => ({ ...item, current: item.model === currentModel })),
+    switchModel: (model: string): void => {
+      if (!models.some((item) => item.model === model)) {
+        throw new Error(`未知模型：${model}`);
       }
-      activeId = id;
+      currentModel = model;
     }
   };
 }

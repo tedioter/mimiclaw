@@ -1,5 +1,5 @@
 export { loadConfig } from "./load.js";
-export { getActiveModelConfig } from "./model-section.js";
+export { getCurrentModelConfig } from "./model-section.js";
 export type * from "./types.js";
 export {
   DEFAULT_CONFIG_PATH,

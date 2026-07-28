@@ -533,12 +533,12 @@ export class QQAdapter extends PlatformAdapter {
         : this.findModel(modelControl.listModels(), vendorArg);
     if (selected) {
       try {
-        modelControl.switchModel(selected.id);
-        const active = modelControl.listModels().find((item) => item.active);
+        modelControl.switchModel(selected.model);
+        const current = modelControl.listModels().find((item) => item.current);
         await this.sendModelCommandReply(
           client,
           replyTarget,
-          `已切换为 ${active?.vendorName ?? selected.vendorName} / ${active?.model ?? selected.model}，下一条私聊消息生效。`
+          `已切换为 ${current?.vendorName ?? selected.vendorName} / ${current?.model ?? selected.model}，下一条私聊消息生效。`
         );
       } catch (error) {
         const reason = error instanceof MimiError ? error.message : "切换模型失败";
@@ -571,7 +571,6 @@ export class QQAdapter extends PlatformAdapter {
     const normalized = value.toLowerCase();
     return models.find(
       (item) =>
-        item.id.toLowerCase() === normalized ||
         item.model.toLowerCase() === normalized ||
         `${item.vendorId}/${item.model}`.toLowerCase() === normalized
     );
@@ -582,7 +581,7 @@ export class QQAdapter extends PlatformAdapter {
       return "当前未配置模型厂商。";
     }
     const lines = vendors.map((item, index) => {
-      const marker = item.active ? "* " : "  ";
+      const marker = item.current ? "* " : "  ";
       return `${marker}${index + 1}. ${item.name} (${item.id})，${item.modelCount} 个模型`;
     });
     return `请选择模型厂商：\n${lines.join("\n")}\n\n查看模型：/model <厂商>\n切换模型：/model <厂商> <模型>`;
@@ -593,7 +592,7 @@ export class QQAdapter extends PlatformAdapter {
       return `${vendor.name} 当前没有可用模型。`;
     }
     const lines = models.map((item, index) => {
-      const marker = item.active ? "* " : "  ";
+      const marker = item.current ? "* " : "  ";
       return `${marker}${index + 1}. ${item.model}`;
     });
     return `${vendor.name} 可用模型：\n${lines.join("\n")}\n\n切换模型：/model ${vendor.id} <模型>`;

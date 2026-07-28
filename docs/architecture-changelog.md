@@ -299,6 +299,30 @@ new Agent(model, memory, tools);
 
 - 模型厂商与模型列表仍由本项目配置维护，尚未接入厂商模型发现 API。
 
+## 2026-07-28：以模型名统一运行时身份
+
+### 背景
+
+上一提交已经按厂商组织模型，但内部仍使用厂商前缀和 runtime ID 标识模型。当前约定模型名全局唯一，因此继续保留两套身份会增加配置、持久化和平台切换的转换逻辑。
+
+### 变更
+
+- `ModelSectionConfig` 使用 `currentModel`，模型配置和厂商的模型列表都直接以模型名索引。
+- `ModelRuntime` 使用模型名管理实例，公开接口改为 `getCurrentModel()`、`getCurrent()` 和 `switchModel(model)`；模型信息使用 `current` 标记，不再暴露 runtime ID。
+- 选择持久化改为 `{ "currentModel": "..." }`。读取时兼容旧的 `active` 字段及旧 runtime 名称，避免升级后丢失用户选择。
+- 配置解析支持 `model.current_model` 和 `model.vendors.<vendor>.model_options.<model>`。厂商配置提供公共参数，模型级配置只覆盖有差异的字段。
+- Agent、App、CLI 和 QQ 私聊切换链路统一传递模型名，厂商仅负责分组和展示，不参与模型身份生成。
+
+### 影响
+
+- 模型切换、重启恢复和 Agent 每轮取模都围绕模型名运行，下一轮对话继续使用切换后的模型。
+- 新配置不再需要拼接 `vendor/model` 作为模型身份；旧 flat 配置和旧 `[model.runtimes.*]` 配置仍可迁移读取。
+- `deepseek-v4-flash` 可以通过模型级覆盖保持与公共厂商参数不同的思考设置。
+
+### 暂未解决的问题
+
+- 厂商模型列表仍由项目配置维护，尚未接入厂商模型发现 API。
+
 ## 后续记录格式
 
 提交架构相关改动时，在**同一次 commit** 中追加章节，结构如下：

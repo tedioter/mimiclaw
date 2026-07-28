@@ -274,7 +274,7 @@ export class CliAdapter extends PlatformAdapter {
         console.log("已取消切换。");
         return;
       }
-      this.switchModel(selected.id);
+      this.switchModel(selected.model);
       return;
     }
     const models = this.modelControl.listModels();
@@ -301,7 +301,7 @@ export class CliAdapter extends PlatformAdapter {
         console.log("未找到对应厂商或模型。用法：/model <厂商> <模型>");
         return;
       }
-      this.switchModel(selected.id);
+      this.switchModel(selected.model);
       return;
     }
 
@@ -311,7 +311,7 @@ export class CliAdapter extends PlatformAdapter {
       return;
     }
     const selected = this.findModel(models, vendorArg);
-    this.switchModel(selected?.id ?? vendorArg);
+    this.switchModel(selected?.model ?? vendorArg);
   }
 
   private async selectModelInteractively(
@@ -332,13 +332,13 @@ export class CliAdapter extends PlatformAdapter {
       const selectedVendorId = await terminalSelect(
         vendors.map((item) => ({
           value: item.id,
-          label: `${item.active ? "* " : "  "}${item.name} (${item.modelCount} 个模型)`
+          label: `${item.current ? "* " : "  "}${item.name} (${item.modelCount} 个模型)`
         })),
         "选择模型厂商：",
         "↑↓ 选择，Enter 确认，Esc 取消",
         Math.max(
           0,
-          vendors.findIndex((item) => item.active)
+          vendors.findIndex((item) => item.current)
         )
       );
       if (!selectedVendorId) {
@@ -353,14 +353,14 @@ export class CliAdapter extends PlatformAdapter {
       }
       const selectedModelId = await terminalSelect(
         models.map((item) => ({
-          value: item.id,
-          label: `${item.active ? "* " : "  "}${item.model}`
+          value: item.model,
+          label: `${item.current ? "* " : "  "}${item.model}`
         })),
         "选择模型：",
         "↑↓ 选择，Enter 确认，Esc 取消",
         Math.max(
           0,
-          models.findIndex((item) => item.active)
+          models.findIndex((item) => item.current)
         )
       );
       return selectedModelId ? this.findModel(models, selectedModelId) : undefined;
@@ -374,16 +374,16 @@ export class CliAdapter extends PlatformAdapter {
     }
   }
 
-  private switchModel(id: string): void {
+  private switchModel(model: string): void {
     if (!this.modelControl) {
       return;
     }
     const models = this.modelControl.listModels();
     try {
-      this.modelControl.switchModel(id);
-      const active = this.modelControl.listModels().find((item) => item.active);
+      this.modelControl.switchModel(model);
+      const current = this.modelControl.listModels().find((item) => item.current);
       console.log(
-        `已切换为 ${active?.vendorName ?? "未知厂商"} / ${active?.model ?? id}，下一轮对话生效。`
+        `已切换为 ${current?.vendorName ?? "未知厂商"} / ${current?.model ?? model}，下一轮对话生效。`
       );
     } catch (error) {
       const knownIds = models.map((item) => `${item.vendorId}/${item.model}`).join("、");
@@ -414,7 +414,6 @@ export class CliAdapter extends PlatformAdapter {
     const normalized = value.toLowerCase();
     return models.find(
       (item) =>
-        item.id.toLowerCase() === normalized ||
         item.model.toLowerCase() === normalized ||
         `${item.vendorId}/${item.model}`.toLowerCase() === normalized
     );
@@ -434,7 +433,7 @@ export class CliAdapter extends PlatformAdapter {
     }
     console.log(`可用模型（${models[0]?.vendorName ?? "未知厂商"}）：`);
     for (const [index, item] of models.entries()) {
-      const marker = item.active ? "* " : "  ";
+      const marker = item.current ? "* " : "  ";
       console.log(`${marker}${index + 1}. ${item.model}`);
     }
     console.log(`切换用法：/model ${models[0]?.vendorId ?? "<厂商>"} <模型>`);

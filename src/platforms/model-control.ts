@@ -7,5 +7,5 @@ export type ModelVendor = ModelVendorInfo;
 export type ModelControl = {
   listVendors(): ModelVendor[];
   listModels(vendorId?: string): ModelRuntimeInfo[];
-  switchModel(id: string): void;
+  switchModel(model: string): void;
 };

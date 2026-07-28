@@ -21,14 +21,16 @@ export type ModelConfig = {
 /** 一个厂商下可供选择的模型 runtime。 */
 export type ModelVendorConfig = {
   name: string;
-  runtimeIds: readonly string[];
+  models: readonly string[];
 };
 
-/** [model] 段：active 指定当前对话 runtime，runtimes 为各模型实例配置。 */
+/** [model] 段：current_model 指定当前模型，runtimes 按模型名保存实例配置。 */
 export type ModelSectionConfig = {
-  active: string;
+  currentModel: string;
   runtimes: Readonly<Record<string, ModelConfig>>;
   vendors?: Readonly<Record<string, ModelVendorConfig>>;
+  /** 旧 runtime 名称到模型名的迁移映射。 */
+  modelAliases?: Readonly<Record<string, string>>;
 };
 
 export type DisplayConfig = {

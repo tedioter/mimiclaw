@@ -7,32 +7,32 @@ import type { Model } from "./model.js";
 import { OpenAICompatibleModel } from "./openai-compatible.js";
 
 export type ModelRuntimeInfo = {
-  id: string;
   vendorId: string;
   vendorName: string;
   model: string;
   baseUrl: string;
-  active: boolean;
+  current: boolean;
 };
 
 export type ModelVendorInfo = {
   id: string;
   name: string;
   modelCount: number;
-  active: boolean;
+  current: boolean;
 };
 
-export type ModelFactory = (id: string, config: ModelConfig) => Model;
+export type ModelFactory = (model: string, config: ModelConfig) => Model;
 
-const defaultFactory: ModelFactory = (_id, config) => new OpenAICompatibleModel(config);
+const defaultFactory: ModelFactory = (_model, config) => new OpenAICompatibleModel(config);
 
 /** 管理多个对话模型 runtime，按 active 懒加载实例；切换仅影响下一轮 respond。 */
 export class ModelRuntime {
-  private activeId: string;
+  private currentModel: string;
   private readonly configs: Readonly<Record<string, ModelConfig>>;
   private readonly statePath: string | undefined;
   private readonly vendors: Readonly<Record<string, ModelVendorConfig>>;
-  private readonly runtimeVendors = new Map<string, { id: string; name: string }>();
+  private readonly modelAliases: Readonly<Record<string, string>>;
+  private readonly modelVendors = new Map<string, { id: string; name: string }>();
   private readonly instances = new Map<string, Model>();
   private closePromise?: Promise<void>;
 
@@ -43,64 +43,64 @@ export class ModelRuntime {
   ) {
     this.configs = section.runtimes;
     this.statePath = statePath;
-    this.activeId = section.active;
-    if (!this.configs[this.activeId]) {
-      throw new ConfigError(`model.active 指向未知 runtime：${this.activeId}`);
+    this.modelAliases = section.modelAliases ?? {};
+    this.currentModel = section.currentModel;
+    if (!this.configs[this.currentModel]) {
+      throw new ConfigError(`model.current_model 指向未知模型：${this.currentModel}`);
     }
 
     const configuredVendors = section.vendors ?? {
-      deepseek: { name: "DeepSeek", runtimeIds: Object.keys(this.configs) }
+      deepseek: { name: "DeepSeek", models: Object.keys(this.configs) }
     };
-    const assignedRuntimeIds = new Set<string>();
+    const assignedModels = new Set<string>();
     for (const [vendorId, vendor] of Object.entries(configuredVendors)) {
-      for (const runtimeId of vendor.runtimeIds) {
-        if (!this.configs[runtimeId]) {
-          throw new ConfigError(`厂商 ${vendorId} 引用了未知模型 runtime：${runtimeId}`);
+      for (const model of vendor.models) {
+        if (!this.configs[model]) {
+          throw new ConfigError(`厂商 ${vendorId} 引用了未知模型：${model}`);
         }
-        if (assignedRuntimeIds.has(runtimeId)) {
-          throw new ConfigError(`模型 runtime 重复归属多个厂商：${runtimeId}`);
+        if (assignedModels.has(model)) {
+          throw new ConfigError(`模型重复归属多个厂商：${model}`);
         }
-        assignedRuntimeIds.add(runtimeId);
-        this.runtimeVendors.set(runtimeId, { id: vendorId, name: vendor.name });
+        assignedModels.add(model);
+        this.modelVendors.set(model, { id: vendorId, name: vendor.name });
       }
     }
 
-    const unassignedRuntimeIds = Object.keys(this.configs).filter(
-      (runtimeId) => !assignedRuntimeIds.has(runtimeId)
+    const unassignedModels = Object.keys(this.configs).filter(
+      (model) => !assignedModels.has(model)
     );
-    if (unassignedRuntimeIds.length) {
-      throw new ConfigError(`模型 runtime 未归属任何厂商：${unassignedRuntimeIds.join("、")}`);
+    if (unassignedModels.length) {
+      throw new ConfigError(`模型未归属任何厂商：${unassignedModels.join("、")}`);
     }
     this.vendors = configuredVendors;
     this.restorePersistedSelection();
   }
 
-  getActiveId(): string {
-    return this.activeId;
+  getCurrentModel(): string {
+    return this.currentModel;
   }
 
-  getActive(): Model {
-    return this.getOrCreate(this.activeId);
+  getCurrent(): Model {
+    return this.getOrCreate(this.currentModel);
   }
 
   list(vendorId?: string): ModelRuntimeInfo[] {
-    const runtimeIds = vendorId
-      ? (this.vendors[this.resolveVendorId(vendorId) ?? ""]?.runtimeIds ?? [])
+    const models = vendorId
+      ? (this.vendors[this.resolveVendorId(vendorId) ?? ""]?.models ?? [])
       : Object.keys(this.configs);
-    return runtimeIds.flatMap((id) => {
-      const config = this.configs[id];
-      const vendor = this.runtimeVendors.get(id);
+    return models.flatMap((model) => {
+      const config = this.configs[model];
+      const vendor = this.modelVendors.get(model);
       if (!config || !vendor) {
         return [];
       }
       return [
         {
-          id,
           vendorId: vendor.id,
           vendorName: vendor.name,
           model: config.model,
           baseUrl: config.baseUrl,
-          active: id === this.activeId
+          current: model === this.currentModel
         }
       ];
     });
@@ -110,20 +110,20 @@ export class ModelRuntime {
     return Object.entries(this.vendors).map(([id, vendor]) => ({
       id,
       name: vendor.name,
-      modelCount: vendor.runtimeIds.filter((runtimeId) => Boolean(this.configs[runtimeId])).length,
-      active: vendor.runtimeIds.includes(this.activeId)
+      modelCount: vendor.models.filter((model) => Boolean(this.configs[model])).length,
+      current: vendor.models.includes(this.currentModel)
     }));
   }
 
-  switchActive(id: string): void {
-    const resolved = this.resolveRuntimeId(id);
+  switchModel(model: string): void {
+    const resolved = this.resolveModelName(model);
     if (!resolved) {
-      throw new MimiError(`未知模型 runtime：${id}`);
+      throw new MimiError(`未知模型：${model}`);
     }
     if (this.statePath) {
-      atomicWriteText(this.statePath, `${JSON.stringify({ active: resolved }, null, 2)}\n`);
+      atomicWriteText(this.statePath, `${JSON.stringify({ currentModel: resolved }, null, 2)}\n`);
     }
-    this.activeId = resolved;
+    this.currentModel = resolved;
   }
 
   private restorePersistedSelection(): void {
@@ -132,33 +132,47 @@ export class ModelRuntime {
     }
     try {
       const raw: unknown = JSON.parse(fs.readFileSync(this.statePath, "utf8"));
-      if (!isRecord(raw) || typeof raw.active !== "string") {
+      if (!isRecord(raw)) {
         return;
       }
-      const resolved = this.resolveRuntimeId(raw.active);
+      const persistedModel =
+        typeof raw.currentModel === "string"
+          ? raw.currentModel
+          : typeof raw.active === "string"
+            ? raw.active
+            : undefined;
+      if (!persistedModel) {
+        return;
+      }
+      const resolved = this.resolveModelName(persistedModel);
       if (resolved) {
-        this.activeId = resolved;
+        this.currentModel = resolved;
       }
     } catch {
       // 选择状态损坏时回退到配置中的默认模型，避免阻塞启动。
     }
   }
 
-  private resolveRuntimeId(id: string): string | undefined {
-    if (this.configs[id]) {
-      return id;
+  private resolveModelName(model: string): string | undefined {
+    const candidates = model.includes("/")
+      ? [model, model.slice(model.lastIndexOf("/") + 1)]
+      : [model];
+    for (const candidate of candidates) {
+      const normalized = candidate.toLowerCase();
+      const resolved = Object.keys(this.configs).find(
+        (modelName) => modelName.toLowerCase() === normalized
+      );
+      if (resolved) {
+        return resolved;
+      }
+      const alias = Object.entries(this.modelAliases).find(
+        ([name]) => name.toLowerCase() === normalized
+      )?.[1];
+      if (alias && this.configs[alias]) {
+        return alias;
+      }
     }
-    const normalized = id.toLowerCase();
-    const exact = Object.keys(this.configs).find(
-      (runtimeId) => runtimeId.toLowerCase() === normalized
-    );
-    if (exact) {
-      return exact;
-    }
-    const modelMatches = Object.entries(this.configs)
-      .filter(([, config]) => config.model.toLowerCase() === normalized)
-      .map(([runtimeId]) => runtimeId);
-    return modelMatches.length === 1 ? modelMatches[0] : undefined;
+    return undefined;
   }
 
   private resolveVendorId(id: string): string | undefined {
@@ -176,15 +190,15 @@ export class ModelRuntime {
     return this.closePromise;
   }
 
-  private getOrCreate(id: string): Model {
-    let instance = this.instances.get(id);
+  private getOrCreate(model: string): Model {
+    let instance = this.instances.get(model);
     if (!instance) {
-      const config = this.configs[id];
+      const config = this.configs[model];
       if (!config) {
-        throw new MimiError(`未知模型 runtime：${id}`);
+        throw new MimiError(`未知模型：${model}`);
       }
-      instance = this.factory(id, config);
-      this.instances.set(id, instance);
+      instance = this.factory(model, config);
+      this.instances.set(model, instance);
     }
     return instance;
   }

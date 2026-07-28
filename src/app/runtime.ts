@@ -97,8 +97,8 @@ export class AgentRuntime {
     return this.agent.modelRuntime.list(vendorId);
   }
 
-  switchModel(id: string): void {
-    this.agent.modelRuntime.switchActive(id);
+  switchModel(model: string): void {
+    this.agent.modelRuntime.switchModel(model);
   }
 
   private async closeResources(): Promise<void> {

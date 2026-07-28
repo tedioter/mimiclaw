@@ -1,11 +1,11 @@
 import type { ModelConfig, ModelSectionConfig } from "./types.js";
 import { ConfigError } from "../types/errors.js";
 
-/** 返回当前 active runtime 的模型配置。 */
-export function getActiveModelConfig(section: ModelSectionConfig): ModelConfig {
-  const config = section.runtimes[section.active];
+/** 返回当前模型的配置。 */
+export function getCurrentModelConfig(section: ModelSectionConfig): ModelConfig {
+  const config = section.runtimes[section.currentModel];
   if (!config) {
-    throw new ConfigError(`model.active 指向未知 runtime：${section.active}`);
+    throw new ConfigError(`model.current_model 指向未知模型：${section.currentModel}`);
   }
   return config;
 }

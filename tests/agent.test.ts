@@ -51,7 +51,7 @@ describe("Agent 工具循环", () => {
     const model = new FakeModel([]);
     const close = vi.spyOn(model, "close");
     const agent = createTestAgent(model, createMemory(root), new ToolRegistry([]));
-    agent.modelRuntime.getActive();
+    agent.modelRuntime.getCurrent();
 
     await Promise.all([agent.close(), agent.close()]);
     await agent.close();
@@ -256,7 +256,7 @@ describe("Agent 工具循环", () => {
     const modelB = new FakeModel([[{ type: "model_text_delta", text: "B" }]]);
     const modelRuntime = new ModelRuntime(
       {
-        active: "a",
+        currentModel: "a",
         runtimes: {
           a: makeModelConfig({ model: "a" }),
           b: makeModelConfig({ model: "b" })
@@ -269,7 +269,7 @@ describe("Agent 工具循环", () => {
     for await (const _event of agent.respond({ platform: "cli", text: "第一轮" })) {
       // 消费完整事件流
     }
-    modelRuntime.switchActive("b");
+    modelRuntime.switchModel("b");
     for await (const _event of agent.respond({ platform: "cli", text: "第二轮" })) {
       // 消费完整事件流
     }

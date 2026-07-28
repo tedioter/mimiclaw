@@ -12,7 +12,7 @@ import { MessageBus } from "../src/bus/message-bus.js";
 import type { InboundMessage } from "../src/bus/message-bus.js";
 import type { AgentEvent } from "../src/types/events.js";
 import { createDeferred } from "../src/utils/async.js";
-import { getActiveModelConfig } from "../src/config/index.js";
+import { getCurrentModelConfig } from "../src/config/index.js";
 import { makeConfig, temporaryDirectory } from "./test-helpers.js";
 
 function mockAgent(
@@ -205,7 +205,7 @@ function writeMultiModelRuntimeConfig(root: string): string {
     [
       `data_dir = "${path.join(root, "data").replace(/\\/g, "/")}"`,
       "[model]",
-      'active = "deepseek/main-model"',
+      'current_model = "main-model"',
       "",
       "[model.vendors.deepseek]",
       'name = "DeepSeek"',
@@ -227,8 +227,8 @@ describe("createRuntime", () => {
     const configPath = writeRuntimeConfig(root);
     const runtime = await createRuntime(true, configPath);
     try {
-      expect(getActiveModelConfig(runtime.config.model).model).toBe("demo");
-      expect(runtime.listModels().some((item) => item.active && item.model === "demo")).toBe(true);
+      expect(getCurrentModelConfig(runtime.config.model).model).toBe("demo");
+      expect(runtime.listModels().some((item) => item.current && item.model === "demo")).toBe(true);
       expect(runtime.agent).toBeDefined();
       expect(runtime.bus).toBeDefined();
     } finally {
@@ -241,15 +241,15 @@ describe("createRuntime", () => {
     const configPath = writeMultiModelRuntimeConfig(root);
     const first = await createRuntime(true, configPath);
     try {
-      first.switchModel("deepseek/fast-model");
-      expect(first.listModels().find((item) => item.active)?.model).toBe("fast-model");
+      first.switchModel("fast-model");
+      expect(first.listModels().find((item) => item.current)?.model).toBe("fast-model");
     } finally {
       await first.close();
     }
 
     const second = await createRuntime(true, configPath);
     try {
-      expect(second.listModels().find((item) => item.active)?.model).toBe("fast-model");
+      expect(second.listModels().find((item) => item.current)?.model).toBe("fast-model");
     } finally {
       await second.close();
     }

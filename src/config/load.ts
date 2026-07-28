@@ -63,9 +63,39 @@ function legacyModelVendors(
   return {
     deepseek: {
       name: "DeepSeek",
-      runtimeIds: Object.keys(runtimes)
+      models: Object.keys(runtimes)
     }
   };
+}
+
+function configuredCurrentModel(modelTable: Table): string {
+  return configString(
+    modelTable.current_model ?? modelTable.active,
+    "",
+    "model.current_model"
+  ).trim();
+}
+
+function resolveCurrentModel(
+  value: string,
+  runtimes: Readonly<Record<string, ModelConfig>>,
+  aliases: Readonly<Record<string, string>> = {}
+): string {
+  const candidates = value.includes("/")
+    ? [value, value.slice(value.lastIndexOf("/") + 1)]
+    : [value];
+  for (const candidate of candidates) {
+    const normalized = candidate.toLowerCase();
+    const model = Object.keys(runtimes).find((item) => item.toLowerCase() === normalized);
+    if (model) {
+      return model;
+    }
+    const alias = Object.entries(aliases).find(([key]) => key.toLowerCase() === normalized)?.[1];
+    if (alias) {
+      return alias;
+    }
+  }
+  throw new ConfigError(`model.current_model 指向未知模型：${value}`);
 }
 
 function parseVendorModelSection(
@@ -94,29 +124,38 @@ function parseVendorModelSection(
     if (!modelNames.length) {
       throw new ConfigError(`配置项 model.vendors.${vendorId}.models 至少配置一个模型`);
     }
+    const modelOptionsTable =
+      vendorTable.model_options === undefined
+        ? undefined
+        : table(vendorTable.model_options, `model.vendors.${vendorId}.model_options`);
 
-    const runtimeIds: string[] = [];
+    const modelNamesInVendor: string[] = [];
     for (const modelName of modelNames) {
-      const runtimeId = `${vendorId}/${modelName}`;
-      if (runtimes[runtimeId]) {
-        throw new ConfigError(`配置项 model.vendors 中存在重复模型：${runtimeId}`);
+      const existingModel = Object.keys(runtimes).find(
+        (item) => item.toLowerCase() === modelName.toLowerCase()
+      );
+      if (existingModel) {
+        throw new ConfigError(`配置项 model.vendors 中存在重复模型：${modelName}`);
       }
-      runtimes[runtimeId] = parseModelFieldsFromTable(
-        { ...vendorTable, model: modelName },
+      const modelOptions = modelOptionsTable?.[modelName];
+      const modelOverrides =
+        modelOptions === undefined
+          ? {}
+          : table(modelOptions, `model.vendors.${vendorId}.model_options.${modelName}`);
+      runtimes[modelName] = parseModelFieldsFromTable(
+        { ...vendorTable, ...modelOverrides, model: modelName },
         `model.vendors.${vendorId}.models.${modelName}`,
         requireModelKey
       );
-      runtimeIds.push(runtimeId);
+      modelNamesInVendor.push(modelName);
     }
-    vendors[vendorId] = { name: vendorName || vendorId, runtimeIds };
+    vendors[vendorId] = { name: vendorName || vendorId, models: modelNamesInVendor };
   }
 
-  const runtimeIds = Object.keys(runtimes);
-  const active = configString(modelTable.active, "", "model.active").trim() || runtimeIds[0] || "";
-  if (!runtimes[active]) {
-    throw new ConfigError(`model.active 指向未知模型：${active}`);
-  }
-  return { active, runtimes, vendors };
+  const modelNames = Object.keys(runtimes);
+  const configured = configuredCurrentModel(modelTable);
+  const currentModel = resolveCurrentModel(configured || modelNames[0] || "", runtimes);
+  return { currentModel, runtimes, vendors };
 }
 
 function parseModelSection(raw: Table, requireModelKey: boolean): ModelSectionConfig {
@@ -128,23 +167,39 @@ function parseModelSection(raw: Table, requireModelKey: boolean): ModelSectionCo
   const runtimesTable = modelTable.runtimes;
   if (isRecord(runtimesTable) && Object.keys(runtimesTable).length > 0) {
     const runtimes: Record<string, ModelConfig> = {};
+    const aliases: Record<string, string> = {};
     for (const [id, value] of Object.entries(runtimesTable)) {
       if (!isRecord(value)) {
         throw new ConfigError(`配置项 model.runtimes.${id} 必须是表`);
       }
-      runtimes[id] = parseModelFieldsFromTable(value, `model.runtimes.${id}`, requireModelKey);
+      const config = parseModelFieldsFromTable(value, `model.runtimes.${id}`, requireModelKey);
+      const existingModel = Object.keys(runtimes).find(
+        (item) => item.toLowerCase() === config.model.toLowerCase()
+      );
+      if (existingModel) {
+        throw new ConfigError(`配置项 model.runtimes 中存在重复模型：${config.model}`);
+      }
+      runtimes[config.model] = config;
+      aliases[id] = config.model;
     }
-    const runtimeIds = Object.keys(runtimes);
-    const active =
-      configString(modelTable.active, "", "model.active").trim() || runtimeIds[0] || "main";
-    if (!runtimes[active]) {
-      throw new ConfigError(`model.active 指向未知 runtime：${active}`);
-    }
-    return { active, runtimes, vendors: legacyModelVendors(runtimes) };
+    const modelNames = Object.keys(runtimes);
+    const configured = configuredCurrentModel(modelTable);
+    const currentModel = resolveCurrentModel(configured || modelNames[0] || "", runtimes, aliases);
+    return {
+      currentModel,
+      runtimes,
+      vendors: legacyModelVendors(runtimes),
+      modelAliases: aliases
+    };
   }
   const single = parseModelFieldsFromTable(modelTable, "model", requireModelKey);
-  const runtimes = { default: single };
-  return { active: "default", runtimes, vendors: legacyModelVendors(runtimes) };
+  const runtimes = { [single.model]: single };
+  return {
+    currentModel: single.model,
+    runtimes,
+    vendors: legacyModelVendors(runtimes),
+    modelAliases: { default: single.model }
+  };
 }
 
 function parseDisplayConfig(raw: Table): DisplayConfig {

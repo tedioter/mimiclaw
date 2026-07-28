@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { loadConfig, getActiveModelConfig, workspacePath } from "../src/config/index.js";
+import { loadConfig, getCurrentModelConfig, workspacePath } from "../src/config/index.js";
 import { ConfigError } from "../src/types/errors.js";
 import { cleanupTemporaryDirectories, temporaryDirectory } from "./test-helpers.js";
 
@@ -28,10 +28,10 @@ describe("配置解析", () => {
   it("读取基础配置和默认值", () => {
     const file = writeConfig();
     const config = loadConfig(file);
-    expect(getActiveModelConfig(config.model).model).toBe("demo");
-    expect(config.model.active).toBe("default");
+    expect(getCurrentModelConfig(config.model).model).toBe("demo");
+    expect(config.model.currentModel).toBe("demo");
     expect(config.model.vendors).toEqual({
-      deepseek: { name: "DeepSeek", runtimeIds: ["default"] }
+      deepseek: { name: "DeepSeek", models: ["demo"] }
     });
     expect(config.tools.maxWebChars).toBe(30_000);
     expect(config.platform.qq.markdownSupport).toBe(true);
@@ -73,7 +73,7 @@ describe("配置解析", () => {
       ].join("\n")
     );
     const config = loadConfig(file);
-    expect(getActiveModelConfig(config.model)).toMatchObject({
+    expect(getCurrentModelConfig(config.model)).toMatchObject({
       timeoutSeconds: 0.5,
       maxRetries: 0,
       temperature: 0,
@@ -148,9 +148,9 @@ describe("配置解析", () => {
       ].join("\n")
     );
     const config = loadConfig(file);
-    expect(config.model.active).toBe("fast");
-    expect(config.model.runtimes.main?.model).toBe("main-model");
-    expect(getActiveModelConfig(config.model).model).toBe("fast-model");
+    expect(config.model.currentModel).toBe("fast-model");
+    expect(config.model.runtimes["main-model"]?.model).toBe("main-model");
+    expect(getCurrentModelConfig(config.model).model).toBe("fast-model");
   });
 
   it("解析厂商与模型两级配置", () => {
@@ -160,28 +160,33 @@ describe("配置解析", () => {
       file,
       [
         "[model]",
-        'active = "deepseek/deepseek-v4-pro"',
+        'current_model = "deepseek-v4-pro"',
         "",
         "[model.vendors.deepseek]",
         'name = "DeepSeek"',
         'base_url = "https://api.deepseek.com"',
         'api_key = "deepseek-key"',
         'models = ["deepseek-v4-pro", "deepseek-v4-flash"]',
+        "",
+        "[model.vendors.deepseek.model_options.deepseek-v4-flash]",
+        "enable_thinking = false",
         ""
       ].join("\n")
     );
 
     const config = loadConfig(file);
-    expect(config.model.active).toBe("deepseek/deepseek-v4-pro");
+    expect(config.model.currentModel).toBe("deepseek-v4-pro");
     expect(config.model.vendors?.deepseek).toEqual({
       name: "DeepSeek",
-      runtimeIds: ["deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash"]
+      models: ["deepseek-v4-pro", "deepseek-v4-flash"]
     });
-    expect(config.model.runtimes["deepseek/deepseek-v4-flash"]).toMatchObject({
+    expect(config.model.runtimes["deepseek-v4-flash"]).toMatchObject({
       baseUrl: "https://api.deepseek.com",
       apiKey: "deepseek-key",
-      model: "deepseek-v4-flash"
+      model: "deepseek-v4-flash",
+      enableThinking: false
     });
+    expect(config.model.runtimes["deepseek-v4-pro"]?.enableThinking).toBe(true);
   });
 
   it("拒绝指向未知 runtime 的 active", () => {
@@ -191,7 +196,7 @@ describe("配置解析", () => {
       file,
       [
         "[model]",
-        'active = "missing"',
+        'current_model = "missing"',
         "",
         "[model.runtimes.main]",
         'base_url = "https://example.com/v1"',
@@ -200,6 +205,6 @@ describe("配置解析", () => {
         ""
       ].join("\n")
     );
-    expect(() => loadConfig(file)).toThrow("model.active 指向未知 runtime：missing");
+    expect(() => loadConfig(file)).toThrow("model.current_model 指向未知模型：missing");
   });
 });

@@ -1,7 +1,7 @@
 data_dir = "data"
 
 [model]
-active = "deepseek/deepseek-v4-pro"
+current_model = "deepseek-v4-pro"
 
 [model.vendors.deepseek]
 name = "DeepSeek"

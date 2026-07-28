@@ -24,113 +24,162 @@ describe("ModelRuntime", () => {
     const created: string[] = [];
     const runtime = new ModelRuntime(
       {
-        active: "main",
+        currentModel: "main-model",
         runtimes: {
-          main: makeModelConfig({ model: "main-model" }),
-          fast: makeModelConfig({ model: "fast-model" })
+          "main-model": makeModelConfig({ model: "main-model" }),
+          "fast-model": makeModelConfig({ model: "fast-model" })
         }
       },
-      (id) => {
-        created.push(id);
-        return new TrackingModel(id);
+      (model) => {
+        created.push(model);
+        return new TrackingModel(model);
       }
     );
 
-    const first = runtime.getActive();
+    const first = runtime.getCurrent();
     expect(first).toBeInstanceOf(TrackingModel);
-    expect((first as TrackingModel).id).toBe("main");
-    expect(created).toEqual(["main"]);
+    expect((first as TrackingModel).id).toBe("main-model");
+    expect(created).toEqual(["main-model"]);
 
-    runtime.switchActive("fast");
-    expect(runtime.getActiveId()).toBe("fast");
-    const second = runtime.getActive();
-    expect((second as TrackingModel).id).toBe("fast");
-    expect(created).toEqual(["main", "fast"]);
+    runtime.switchModel("fast-model");
+    expect(runtime.getCurrentModel()).toBe("fast-model");
+    const second = runtime.getCurrent();
+    expect((second as TrackingModel).id).toBe("fast-model");
+    expect(created).toEqual(["main-model", "fast-model"]);
   });
 
   it("持久化切换的模型并在重启后恢复", () => {
     const statePath = path.join(temporaryDirectory(), "data", "model-selection.json");
     const section = {
-      active: "main",
+      currentModel: "main-model",
       runtimes: {
-        main: makeModelConfig({ model: "main-model" }),
-        fast: makeModelConfig({ model: "fast-model" })
+        "main-model": makeModelConfig({ model: "main-model" }),
+        "fast-model": makeModelConfig({ model: "fast-model" })
       }
     };
 
     const first = new ModelRuntime(section, undefined, statePath);
-    first.switchActive("fast");
-    expect(JSON.parse(fs.readFileSync(statePath, "utf8"))).toEqual({ active: "fast" });
+    first.switchModel("fast-model");
+    expect(JSON.parse(fs.readFileSync(statePath, "utf8"))).toEqual({
+      currentModel: "fast-model"
+    });
 
     const second = new ModelRuntime(section, undefined, statePath);
-    expect(second.getActiveId()).toBe("fast");
+    expect(second.getCurrentModel()).toBe("fast-model");
   });
 
   it("忽略已失效的持久化模型并回退至配置 active", () => {
     const statePath = path.join(temporaryDirectory(), "model-selection.json");
-    fs.writeFileSync(statePath, JSON.stringify({ active: "removed" }));
+    fs.writeFileSync(statePath, JSON.stringify({ currentModel: "removed" }));
     const runtime = new ModelRuntime(
       {
-        active: "main",
-        runtimes: { main: makeModelConfig({ model: "main-model" }) }
+        currentModel: "main-model",
+        runtimes: { "main-model": makeModelConfig({ model: "main-model" }) }
       },
       undefined,
       statePath
     );
 
-    expect(runtime.getActiveId()).toBe("main");
+    expect(runtime.getCurrentModel()).toBe("main-model");
+  });
+
+  it("兼容读取旧格式的持久化模型名", () => {
+    const statePath = path.join(temporaryDirectory(), "model-selection.json");
+    fs.writeFileSync(statePath, JSON.stringify({ active: "deepseek/deepseek-v4-flash" }));
+    const runtime = new ModelRuntime(
+      {
+        currentModel: "deepseek-v4-pro",
+        runtimes: {
+          "deepseek-v4-pro": makeModelConfig({ model: "deepseek-v4-pro" }),
+          "deepseek-v4-flash": makeModelConfig({ model: "deepseek-v4-flash" })
+        },
+        vendors: {
+          deepseek: {
+            name: "DeepSeek",
+            models: ["deepseek-v4-pro", "deepseek-v4-flash"]
+          }
+        }
+      },
+      undefined,
+      statePath
+    );
+
+    expect(runtime.getCurrentModel()).toBe("deepseek-v4-flash");
+  });
+
+  it("兼容读取旧 runtime 名称的持久化选择", () => {
+    const statePath = path.join(temporaryDirectory(), "model-selection.json");
+    fs.writeFileSync(statePath, JSON.stringify({ active: "fast" }));
+    const runtime = new ModelRuntime(
+      {
+        currentModel: "deepseek-v4-pro",
+        runtimes: {
+          "deepseek-v4-pro": makeModelConfig({ model: "deepseek-v4-pro" }),
+          "deepseek-v4-flash": makeModelConfig({ model: "deepseek-v4-flash" })
+        },
+        vendors: {
+          deepseek: {
+            name: "DeepSeek",
+            models: ["deepseek-v4-pro", "deepseek-v4-flash"]
+          }
+        },
+        modelAliases: { fast: "deepseek-v4-flash" }
+      },
+      undefined,
+      statePath
+    );
+
+    expect(runtime.getCurrentModel()).toBe("deepseek-v4-flash");
   });
 
   it("list 标记当前 active", () => {
     const runtime = new ModelRuntime(
       {
-        active: "a",
+        currentModel: "a-model",
         runtimes: {
-          a: makeModelConfig({ model: "a-model", baseUrl: "https://a.example.com/v1" }),
-          b: makeModelConfig({ model: "b-model", baseUrl: "https://b.example.com/v1" })
+          "a-model": makeModelConfig({ model: "a-model", baseUrl: "https://a.example.com/v1" }),
+          "b-model": makeModelConfig({ model: "b-model", baseUrl: "https://b.example.com/v1" })
         }
       },
       () => new TrackingModel("x")
     );
     expect(runtime.list()).toEqual([
       {
-        id: "a",
         vendorId: "deepseek",
         vendorName: "DeepSeek",
         model: "a-model",
         baseUrl: "https://a.example.com/v1",
-        active: true
+        current: true
       },
       {
-        id: "b",
         vendorId: "deepseek",
         vendorName: "DeepSeek",
         model: "b-model",
         baseUrl: "https://b.example.com/v1",
-        active: false
+        current: false
       }
     ]);
   });
 
   it("按厂商分组模型并标记当前厂商", () => {
     const runtime = new ModelRuntime({
-      active: "deepseek/deepseek-v4-pro",
+      currentModel: "deepseek-v4-pro",
       runtimes: {
-        "deepseek/deepseek-v4-pro": makeModelConfig({ model: "deepseek-v4-pro" }),
-        "deepseek/deepseek-v4-flash": makeModelConfig({ model: "deepseek-v4-flash" })
+        "deepseek-v4-pro": makeModelConfig({ model: "deepseek-v4-pro" }),
+        "deepseek-v4-flash": makeModelConfig({ model: "deepseek-v4-flash" })
       },
       vendors: {
         deepseek: {
           name: "DeepSeek",
-          runtimeIds: ["deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash"]
+          models: ["deepseek-v4-pro", "deepseek-v4-flash"]
         }
       }
     });
 
     expect(runtime.listVendors()).toEqual([
-      { id: "deepseek", name: "DeepSeek", modelCount: 2, active: true }
+      { id: "deepseek", name: "DeepSeek", modelCount: 2, current: true }
     ]);
-    expect(runtime.list("deepseek").map((item) => [item.model, item.active])).toEqual([
+    expect(runtime.list("deepseek").map((item) => [item.model, item.current])).toEqual([
       ["deepseek-v4-pro", true],
       ["deepseek-v4-flash", false]
     ]);
@@ -140,35 +189,35 @@ describe("ModelRuntime", () => {
     expect(
       () =>
         new ModelRuntime({
-          active: "main",
-          runtimes: { main: makeModelConfig() },
-          vendors: { deepseek: { name: "DeepSeek", runtimeIds: [] } }
+          currentModel: "main-model",
+          runtimes: { "main-model": makeModelConfig({ model: "main-model" }) },
+          vendors: { deepseek: { name: "DeepSeek", models: [] } }
         })
-    ).toThrow("模型 runtime 未归属任何厂商：main");
+    ).toThrow("模型未归属任何厂商：main-model");
   });
 
   it("拒绝切换到未知 runtime", () => {
     const runtime = new ModelRuntime(
-      { active: "main", runtimes: { main: makeModelConfig() } },
-      () => new TrackingModel("main")
+      { currentModel: "test", runtimes: { test: makeModelConfig() } },
+      () => new TrackingModel("test")
     );
-    expect(() => runtime.switchActive("missing")).toThrow(MimiError);
+    expect(() => runtime.switchModel("missing")).toThrow(MimiError);
   });
 
   it("按名称大小写不敏感切换 runtime", () => {
     const runtime = new ModelRuntime(
       {
-        active: "main",
+        currentModel: "main-model",
         runtimes: {
-          main: makeModelConfig({ model: "main-model" }),
-          fast: makeModelConfig({ model: "fast-model" })
+          "main-model": makeModelConfig({ model: "main-model" }),
+          "fast-model": makeModelConfig({ model: "fast-model" })
         }
       },
-      (id) => new TrackingModel(id)
+      (model) => new TrackingModel(model)
     );
-    runtime.switchActive("FAST");
-    expect(runtime.getActiveId()).toBe("fast");
-    expect((runtime.getActive() as TrackingModel).id).toBe("fast");
+    runtime.switchModel("FAST-MODEL");
+    expect(runtime.getCurrentModel()).toBe("fast-model");
+    expect((runtime.getCurrent() as TrackingModel).id).toBe("fast-model");
   });
 
   it("close 只释放已实例化的模型", async () => {
@@ -176,15 +225,15 @@ describe("ModelRuntime", () => {
     const fast = new TrackingModel("fast");
     const runtime = new ModelRuntime(
       {
-        active: "main",
+        currentModel: "main-model",
         runtimes: {
-          main: makeModelConfig(),
-          fast: makeModelConfig()
+          "main-model": makeModelConfig({ model: "main-model" }),
+          "fast-model": makeModelConfig({ model: "fast-model" })
         }
       },
-      (id) => (id === "main" ? main : fast)
+      (model) => (model === "main-model" ? main : fast)
     );
-    runtime.getActive();
+    runtime.getCurrent();
     await runtime.close();
     expect(main.close).toHaveBeenCalledOnce();
     expect(fast.close).not.toHaveBeenCalled();

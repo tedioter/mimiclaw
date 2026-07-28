@@ -38,12 +38,12 @@ export class Agent {
   }
 
   async handleTurnDone(inbound: InboundMessage, assistantReply: string): Promise<void> {
-    const model = this.lastTurnModel ?? this.modelRuntime.getActive();
+    const model = this.lastTurnModel ?? this.modelRuntime.getCurrent();
     await turnDoneHandler(model, this.memory, inbound, assistantReply);
   }
 
   async *respond(inbound: InboundMessage): AsyncIterable<AgentEvent> {
-    const model = this.modelRuntime.getActive();
+    const model = this.modelRuntime.getCurrent();
     this.lastTurnModel = model;
     const turnId = buildTurnId(inbound);
     writeLog("info", "user", {

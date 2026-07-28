@@ -58,10 +58,8 @@ export function makeModelConfig(overrides: Partial<ModelConfig> = {}): ModelConf
 export function makeConfig(root: string, toolOverrides: Partial<ToolConfig> = {}): AppConfig {
   return {
     model: {
-      active: "default",
-      runtimes: {
-        default: makeModelConfig()
-      }
+      currentModel: "test",
+      runtimes: { test: makeModelConfig() }
     },
     display: { showThinking: true, showToolCalls: true },
     tools: {
@@ -114,8 +112,8 @@ export function makeConfig(root: string, toolOverrides: Partial<ToolConfig> = {}
 export function createTestAgent(model: Model, memory: Memory, tools: ToolRegistry): Agent {
   const modelRuntime = new ModelRuntime(
     {
-      active: "default",
-      runtimes: { default: makeModelConfig() }
+      currentModel: "test",
+      runtimes: { test: makeModelConfig() }
     },
     () => model
   );
