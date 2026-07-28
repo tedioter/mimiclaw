@@ -1,8 +1,5 @@
-import fs from "node:fs";
 import type { ModelConfig, ModelSectionConfig, ModelVendorConfig } from "../config/types.js";
 import { ConfigError, MimiError } from "../types/errors.js";
-import { atomicWriteText } from "../utils/atomic-write.js";
-import { isRecord } from "../utils/type-guards.js";
 import type { Model } from "./model.js";
 import { OpenAICompatibleModel } from "./openai-compatible.js";
 
@@ -23,13 +20,15 @@ export type ModelVendorInfo = {
 
 export type ModelFactory = (model: string, config: ModelConfig) => Model;
 
+export type ModelSelectionWriter = (model: string) => void;
+
 const defaultFactory: ModelFactory = (_model, config) => new OpenAICompatibleModel(config);
 
-/** 管理多个对话模型 runtime，按 active 懒加载实例；切换仅影响下一轮 respond。 */
+/** 管理多个对话模型，切换模型只影响下一轮对话。 */
 export class ModelRuntime {
   private currentModel: string;
   private readonly configs: Readonly<Record<string, ModelConfig>>;
-  private readonly statePath: string | undefined;
+  private readonly selectionWriter: ModelSelectionWriter | undefined;
   private readonly vendors: Readonly<Record<string, ModelVendorConfig>>;
   private readonly modelAliases: Readonly<Record<string, string>>;
   private readonly modelVendors = new Map<string, { id: string; name: string }>();
@@ -39,10 +38,10 @@ export class ModelRuntime {
   constructor(
     section: ModelSectionConfig,
     private readonly factory: ModelFactory = defaultFactory,
-    statePath?: string
+    selectionWriter?: ModelSelectionWriter
   ) {
     this.configs = section.runtimes;
-    this.statePath = statePath;
+    this.selectionWriter = selectionWriter;
     this.modelAliases = section.modelAliases ?? {};
     this.currentModel = section.currentModel;
     if (!this.configs[this.currentModel]) {
@@ -73,7 +72,6 @@ export class ModelRuntime {
       throw new ConfigError(`模型未归属任何厂商：${unassignedModels.join("、")}`);
     }
     this.vendors = configuredVendors;
-    this.restorePersistedSelection();
   }
 
   getCurrentModel(): string {
@@ -120,37 +118,8 @@ export class ModelRuntime {
     if (!resolved) {
       throw new MimiError(`未知模型：${model}`);
     }
-    if (this.statePath) {
-      atomicWriteText(this.statePath, `${JSON.stringify({ currentModel: resolved }, null, 2)}\n`);
-    }
+    this.selectionWriter?.(resolved);
     this.currentModel = resolved;
-  }
-
-  private restorePersistedSelection(): void {
-    if (!this.statePath || !fs.existsSync(this.statePath)) {
-      return;
-    }
-    try {
-      const raw: unknown = JSON.parse(fs.readFileSync(this.statePath, "utf8"));
-      if (!isRecord(raw)) {
-        return;
-      }
-      const persistedModel =
-        typeof raw.currentModel === "string"
-          ? raw.currentModel
-          : typeof raw.active === "string"
-            ? raw.active
-            : undefined;
-      if (!persistedModel) {
-        return;
-      }
-      const resolved = this.resolveModelName(persistedModel);
-      if (resolved) {
-        this.currentModel = resolved;
-      }
-    } catch {
-      // 选择状态损坏时回退到配置中的默认模型，避免阻塞启动。
-    }
   }
 
   private resolveModelName(model: string): string | undefined {

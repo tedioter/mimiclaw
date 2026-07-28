@@ -243,6 +243,7 @@ describe("createRuntime", () => {
     try {
       first.switchModel("fast-model");
       expect(first.listModels().find((item) => item.current)?.model).toBe("fast-model");
+      expect(fs.readFileSync(configPath, "utf8")).toContain('current_model = "fast-model"');
     } finally {
       await first.close();
     }

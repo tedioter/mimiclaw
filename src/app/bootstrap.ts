@@ -20,7 +20,7 @@ function createAdapter(
 ): PlatformAdapter {
   switch (name) {
     case "qq":
-      return new QQAdapter(runtime.bus, runtime.config.platform.qq, undefined, runtime);
+      return new QQAdapter(runtime.bus, runtime.config.platform.qq);
     case "feishu":
       return new FeishuAdapter(runtime.bus, runtime.config.platform.feishu);
     case "cli":

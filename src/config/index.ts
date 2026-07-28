@@ -1,4 +1,5 @@
 export { loadConfig } from "./load.js";
+export { updateCurrentModel } from "./persist.js";
 export { getCurrentModelConfig } from "./model-section.js";
 export type * from "./types.js";
 export {
@@ -6,8 +7,8 @@ export {
   DEFAULT_DATA_PATH,
   DEFAULT_MCP_CONFIG_PATH,
   PROJECT_ROOT,
-  modelSelectionPath,
   recentMemoryPath,
+  resolveConfigPath,
   runtimeLogPath,
   workspacePath
 } from "./paths.js";

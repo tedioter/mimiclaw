@@ -4,5 +4,6 @@ export {
   ModelRuntime,
   type ModelFactory,
   type ModelRuntimeInfo,
+  type ModelSelectionWriter,
   type ModelVendorInfo
 } from "./runtime.js";

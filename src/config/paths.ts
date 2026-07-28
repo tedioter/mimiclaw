@@ -12,6 +12,12 @@ export const DEFAULT_CONFIG_PATH = path.join(PROJECT_ROOT, "config.toml");
 export const DEFAULT_DATA_PATH = path.join(PROJECT_ROOT, "data");
 export const DEFAULT_MCP_CONFIG_PATH = path.join(PROJECT_ROOT, "mcp.json");
 
+export function resolveConfigPath(configPath = DEFAULT_CONFIG_PATH): string {
+  return path.isAbsolute(configPath)
+    ? path.resolve(configPath)
+    : path.resolve(PROJECT_ROOT, configPath);
+}
+
 export function projectPath(value: unknown, fallback: string, fieldName: string): string {
   const raw = configString(value, fallback, fieldName).trim();
   if (!raw) {
@@ -36,10 +42,6 @@ export function workspacePath(value: unknown): string {
 
 export function recentMemoryPath(dataDir: string): string {
   return path.join(dataDir, "recent.json");
-}
-
-export function modelSelectionPath(dataDir: string): string {
-  return path.join(dataDir, "model-selection.json");
 }
 
 export function runtimeLogPath(dataDir: string): string {

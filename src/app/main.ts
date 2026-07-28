@@ -1,10 +1,13 @@
-import { pathToFileURL } from "node:url";
+#!/usr/bin/env node
+
+import { fileURLToPath } from "node:url";
+import { realpathSync } from "node:fs";
 import { MimiError, errorMessage } from "../types/errors.js";
 import type { CliPlatformOptions } from "../platforms/cli.js";
 import { initializeProject } from "../init/index.js";
 import { type PlatformName, servePlatforms } from "./bootstrap.js";
 
-export const HELP_TEXT = "用法：mimi <init|chat|ask|serve|qq|feishu> [文本]";
+export const HELP_TEXT = "\u7528\u6cd5\uff1amimi [init]";
 
 type ParsedCommand =
   | { kind: "help"; showHelp: boolean }
@@ -16,33 +19,17 @@ type ParsedCommand =
     };
 
 export function parseCommand(args: readonly string[]): ParsedCommand {
-  const [command, ...rest] = args;
-  if (!command || command === "-h" || command === "--help") {
-    return { kind: "help", showHelp: Boolean(command) };
+  const [command] = args;
+  if (!command) {
+    return { kind: "platform", platforms: ["cli"], cli: { mode: "chat" } };
+  }
+  if (command === "-h" || command === "--help") {
+    return { kind: "help", showHelp: true };
   }
   if (command === "init") {
     return { kind: "init" };
   }
-  if (command === "chat") {
-    return { kind: "platform", platforms: ["cli"], cli: { mode: "chat" } };
-  }
-  if (command === "ask") {
-    if (!rest.length) {
-      throw new MimiError("ask 命令需要文本参数");
-    }
-    return {
-      kind: "platform",
-      platforms: ["cli"],
-      cli: { mode: "ask", text: rest.join(" ") }
-    };
-  }
-  if (command === "serve") {
-    return { kind: "platform", platforms: ["qq", "feishu"] };
-  }
-  if (command === "qq" || command === "feishu") {
-    return { kind: "platform", platforms: [command] };
-  }
-  throw new MimiError(`未知命令：${command}`);
+  throw new MimiError(`\u672a\u77e5\u547d\u4ee4\uff1a${command}`);
 }
 
 export async function run(args = process.argv.slice(2)): Promise<number> {
@@ -71,8 +58,20 @@ async function runMain(): Promise<void> {
   }
 }
 
-const isDirectRun =
-  typeof process.argv[1] === "string" && import.meta.url === pathToFileURL(process.argv[1]).href;
+function isMainModule(): boolean {
+  const entryPath = process.argv[1];
+  if (typeof entryPath !== "string") {
+    return false;
+  }
+  try {
+    // 通过真实路径比较，兼容 npm link 创建的 junction 或符号链接。
+    return realpathSync(entryPath) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+const isDirectRun = isMainModule();
 
 if (isDirectRun) {
   // 长生命周期 CLI 不使用顶层 await，避免输入流结束时出现未收敛警告。

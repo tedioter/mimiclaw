@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import path from "node:path";
 import TOML from "@iarna/toml";
 import type {
   ToolConfig,
@@ -28,7 +27,7 @@ import {
   table,
   type Table
 } from "./parser.js";
-import { DEFAULT_CONFIG_PATH, PROJECT_ROOT, projectPath, workspacePath } from "./paths.js";
+import { DEFAULT_CONFIG_PATH, projectPath, resolveConfigPath, workspacePath } from "./paths.js";
 
 function parseModelFieldsFromTable(
   runtimeTable: Table,
@@ -319,9 +318,7 @@ function parseMcpConfig(raw: Table): McpConfig {
 }
 
 export function loadConfig(configPath = DEFAULT_CONFIG_PATH, requireModelKey = true): AppConfig {
-  const resolved = path.isAbsolute(configPath)
-    ? configPath
-    : path.resolve(PROJECT_ROOT, configPath);
+  const resolved = resolveConfigPath(configPath);
   if (!fs.existsSync(resolved)) {
     throw new ConfigError(`找不到配置文件：${resolved}，请先运行 npm run dev -- init`);
   }

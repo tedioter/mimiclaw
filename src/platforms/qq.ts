@@ -6,7 +6,7 @@ import {
 } from "@tencent-connect/qqbot-nodejs";
 import type { MessageBus, OutboundMessage } from "../bus/message-bus.js";
 import type { QQConfig } from "../config/types.js";
-import { ConfigError, MimiError, PlatformError, errorMessage, errorName } from "../types/errors.js";
+import { ConfigError, PlatformError, errorMessage, errorName } from "../types/errors.js";
 import type { AgentEvent } from "../types/events.js";
 import { createDeferred, withTimeout } from "../utils/async.js";
 import { writeLog } from "../utils/log.js";
@@ -19,7 +19,6 @@ import {
   isActorAllowed,
   type PlatformTextMessage
 } from "./base.js";
-import type { ModelControl, ModelInfo, ModelVendor } from "./model-control.js";
 
 export type QQInboundMessage = {
   kind: "c2c" | "group" | "guild" | "dm";
@@ -368,16 +367,13 @@ export class QQAdapter extends PlatformAdapter {
   private stopping = false;
   private unregisterHandler?: () => void;
   private readonly sendContexts = new Map<string, QQSendContext>();
-  private readonly modelControl: ModelControl | undefined;
 
   constructor(
     private readonly bus: MessageBus,
     readonly config: QQConfig,
-    client?: QQClientLike,
-    modelControl?: ModelControl
+    client?: QQClientLike
   ) {
     super();
-    this.modelControl = modelControl;
     if (client) {
       this.client = client;
     }
@@ -426,12 +422,6 @@ export class QQAdapter extends PlatformAdapter {
     if (!text || !client || !message.messageId) {
       return;
     }
-    const modelCommand = this.parseModelCommand(text);
-    if (modelCommand) {
-      await this.handleModelCommand(client, message.replyTarget, modelCommand);
-      return;
-    }
-
     const streamSender = new QQSdkStreamSender(
       client,
       message.replyTarget,
@@ -463,164 +453,6 @@ export class QQAdapter extends PlatformAdapter {
       text,
       messageId: message.messageId
     });
-  }
-
-  private parseModelCommand(text: string): string[] | undefined {
-    const parts = text.split(/\s+/);
-    const command = parts[0]?.toLowerCase();
-    if (command !== "/model") {
-      return undefined;
-    }
-    return parts.slice(1);
-  }
-
-  private async handleModelCommand(
-    client: QQClientLike,
-    replyTarget: ReplyTarget,
-    args: string[]
-  ): Promise<void> {
-    const modelControl = this.modelControl;
-    if (!modelControl) {
-      await this.sendModelCommandReply(client, replyTarget, "当前未启用模型切换功能。");
-      return;
-    }
-
-    const vendors = modelControl.listVendors();
-    let commandArgs = [...args];
-    const first = commandArgs[0]?.toLowerCase();
-    if (!first || first === "list") {
-      await this.sendModelCommandReply(client, replyTarget, this.formatVendorList(vendors));
-      return;
-    }
-
-    if (first === "vendor" || first === "provider" || first === "use" || first === "switch") {
-      commandArgs = commandArgs.slice(1);
-    }
-
-    if (!commandArgs[0]) {
-      await this.sendModelCommandReply(
-        client,
-        replyTarget,
-        "用法：/model | /model <厂商> | /model <厂商> <模型>"
-      );
-      return;
-    }
-
-    const vendorArg = commandArgs[0];
-    const modelArg = commandArgs[1];
-    if (!vendorArg) {
-      await this.sendModelCommandReply(
-        client,
-        replyTarget,
-        "用法：/model | /model <厂商> | /model <厂商> <模型>"
-      );
-      return;
-    }
-
-    const vendor = this.findVendor(vendors, vendorArg);
-    if (commandArgs.length === 1 && vendor) {
-      await this.sendModelCommandReply(
-        client,
-        replyTarget,
-        this.formatModelList(vendor, modelControl.listModels(vendor.id))
-      );
-      return;
-    }
-
-    const selected =
-      commandArgs.length >= 2 && vendor && modelArg
-        ? this.findModel(modelControl.listModels(vendor.id), modelArg)
-        : this.findModel(modelControl.listModels(), vendorArg);
-    if (selected) {
-      try {
-        modelControl.switchModel(selected.model);
-        const current = modelControl.listModels().find((item) => item.current);
-        await this.sendModelCommandReply(
-          client,
-          replyTarget,
-          `已切换为 ${current?.vendorName ?? selected.vendorName} / ${current?.model ?? selected.model}，下一条私聊消息生效。`
-        );
-      } catch (error) {
-        const reason = error instanceof MimiError ? error.message : "切换模型失败";
-        await this.sendModelCommandReply(client, replyTarget, reason);
-      }
-      return;
-    }
-
-    await this.sendModelCommandReply(
-      client,
-      replyTarget,
-      "未找到对应厂商或模型。用法：/model <厂商> <模型>"
-    );
-  }
-
-  private findVendor(vendors: ModelVendor[], value: string): ModelVendor | undefined {
-    if (/^\d+$/.test(value)) {
-      return vendors[Number(value) - 1];
-    }
-    const normalized = value.toLowerCase();
-    return vendors.find(
-      (item) => item.id.toLowerCase() === normalized || item.name.toLowerCase() === normalized
-    );
-  }
-
-  private findModel(models: ModelInfo[], value: string): ModelInfo | undefined {
-    if (/^\d+$/.test(value)) {
-      return models[Number(value) - 1];
-    }
-    const normalized = value.toLowerCase();
-    return models.find(
-      (item) =>
-        item.model.toLowerCase() === normalized ||
-        `${item.vendorId}/${item.model}`.toLowerCase() === normalized
-    );
-  }
-
-  private formatVendorList(vendors: ModelVendor[]): string {
-    if (!vendors.length) {
-      return "当前未配置模型厂商。";
-    }
-    const lines = vendors.map((item, index) => {
-      const marker = item.current ? "* " : "  ";
-      return `${marker}${index + 1}. ${item.name} (${item.id})，${item.modelCount} 个模型`;
-    });
-    return `请选择模型厂商：\n${lines.join("\n")}\n\n查看模型：/model <厂商>\n切换模型：/model <厂商> <模型>`;
-  }
-
-  private formatModelList(vendor: ModelVendor, models: ModelInfo[]): string {
-    if (!models.length) {
-      return `${vendor.name} 当前没有可用模型。`;
-    }
-    const lines = models.map((item, index) => {
-      const marker = item.current ? "* " : "  ";
-      return `${marker}${index + 1}. ${item.model}`;
-    });
-    return `${vendor.name} 可用模型：\n${lines.join("\n")}\n\n切换模型：/model ${vendor.id} <模型>`;
-  }
-
-  private async sendModelCommandReply(
-    client: QQClientLike,
-    replyTarget: ReplyTarget,
-    text: string
-  ): Promise<void> {
-    try {
-      await PlatformAdapter.sendPlatformText(
-        (outbound) =>
-          QQAdapter.sendWithRetry(
-            (current) => client.sendMessage(replyTarget, current),
-            outbound.text
-          ),
-        { platform: this.name, text },
-        this.config.maxMessageLength
-      );
-    } catch (error) {
-      writeLog("error", "platform", {
-        platform: this.name,
-        type: "qq_model_command_error",
-        errorName: errorName(error),
-        content: errorMessage(error)
-      });
-    }
   }
 
   private async handleOutbound(message: OutboundMessage): Promise<void> {

@@ -1,31 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { MimiError } from "../src/types/errors.js";
 import { parseCommand } from "../src/app/main.js";
 
 describe("parseCommand", () => {
-  it("解析 init、chat、ask、serve 与单平台命令", () => {
-    expect(parseCommand([])).toEqual({ kind: "help", showHelp: false });
-    expect(parseCommand(["--help"])).toEqual({ kind: "help", showHelp: true });
-    expect(parseCommand(["init"])).toEqual({ kind: "init" });
-    expect(parseCommand(["chat"])).toEqual({
+  it("无参数时直接进入 CLI 交互模式", () => {
+    expect(parseCommand([])).toEqual({
       kind: "platform",
       platforms: ["cli"],
       cli: { mode: "chat" }
     });
-    expect(parseCommand(["ask", "你好"])).toEqual({
-      kind: "platform",
-      platforms: ["cli"],
-      cli: { mode: "ask", text: "你好" }
-    });
-    expect(parseCommand(["serve"])).toEqual({
-      kind: "platform",
-      platforms: ["qq", "feishu"]
-    });
-    expect(parseCommand(["qq"])).toEqual({ kind: "platform", platforms: ["qq"] });
   });
 
-  it("ask 缺少文本时抛错", () => {
-    expect(() => parseCommand(["ask"])).toThrow(MimiError);
+  it("支持初始化和帮助命令", () => {
+    expect(parseCommand(["init"])).toEqual({ kind: "init" });
+    expect(parseCommand(["--help"])).toEqual({ kind: "help", showHelp: true });
+  });
+
+  it("不支持单次提问和远程平台命令", () => {
+    for (const command of ["ask", "chat", "serve", "qq", "feishu"]) {
+      expect(() => parseCommand([command])).toThrow(/未知命令/);
+    }
   });
 
   it("未知命令时抛错", () => {

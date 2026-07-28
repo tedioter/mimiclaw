@@ -26,6 +26,18 @@ const SLASH_COMMANDS = [
   { command: "/quit", description: "退出当前对话" }
 ] as const;
 
+export function resolveSlashSubmission(
+  line: string,
+  candidates: readonly { command: string }[],
+  selectedIndex: number,
+  selectionExplicit: boolean
+): string {
+  if (line.trim() === "/" && !selectionExplicit) {
+    return line.trim();
+  }
+  return (candidates[selectedIndex]?.command ?? candidates[0]?.command ?? line).trim();
+}
+
 export class CliAdapter extends PlatformAdapter {
   readonly name = "cli";
   exitCode = 0;
@@ -95,6 +107,7 @@ export class CliAdapter extends PlatformAdapter {
       let commandHintLines = 0;
       let commandHintPrefix = "";
       let commandHintIndex = 0;
+      let commandHintSelectionExplicit = false;
       let commandHintRefreshScheduled = false;
       const commandHistory = new CommandHistory();
       const refreshCommandHints = (): void => {
@@ -114,6 +127,7 @@ export class CliAdapter extends PlatformAdapter {
               commandHintLines = 0;
               commandHintPrefix = "";
               commandHintIndex = 0;
+              commandHintSelectionExplicit = false;
             }
             return;
           }
@@ -125,10 +139,12 @@ export class CliAdapter extends PlatformAdapter {
             }
             commandHintPrefix = currentLine;
             commandHintIndex = 0;
+            commandHintSelectionExplicit = false;
             return;
           }
           if (currentLine !== commandHintPrefix) {
             commandHintIndex = 0;
+            commandHintSelectionExplicit = false;
           } else {
             commandHintIndex = Math.min(commandHintIndex, candidates.length - 1);
           }
@@ -153,6 +169,7 @@ export class CliAdapter extends PlatformAdapter {
           if ((commandHintLines > 0 || commandHintRefreshScheduled) && candidates.length > 0) {
             const delta = key.name === "up" ? -1 : 1;
             commandHintIndex = (commandHintIndex + delta + candidates.length) % candidates.length;
+            commandHintSelectionExplicit = true;
             commandHintLines = this.renderCommandHints(
               terminal,
               terminal.line,
@@ -173,9 +190,13 @@ export class CliAdapter extends PlatformAdapter {
           commandHintLines = 0;
           commandHintPrefix = "";
           commandHintIndex = 0;
+          commandHintSelectionExplicit = false;
           return;
         }
         commandHistory.reset(terminal.line);
+        if (terminal.line !== commandHintPrefix) {
+          commandHintSelectionExplicit = false;
+        }
         if (input === "/" || terminal.line.startsWith("/") || commandHintLines > 0) {
           refreshCommandHints();
         }
@@ -209,15 +230,20 @@ export class CliAdapter extends PlatformAdapter {
         void (async () => {
           const candidates = this.getCommandCandidates(line);
           const hintWasVisible = commandHintLines > 0;
-          const selectedCommand = hintWasVisible
-            ? candidates[commandHintIndex]?.command
-            : undefined;
-          const text = (selectedCommand ?? line).trim();
+          const selectionExplicit =
+            hintWasVisible && commandHintSelectionExplicit && line === commandHintPrefix;
+          const text = resolveSlashSubmission(
+            line,
+            candidates,
+            commandHintIndex,
+            selectionExplicit
+          );
           if (hintWasVisible) {
             this.clearCommandHints(terminal, commandHintLines, true);
             commandHintLines = 0;
             commandHintPrefix = "";
             commandHintIndex = 0;
+            commandHintSelectionExplicit = false;
           }
           if (!text) {
             showPrompt();
@@ -227,9 +253,7 @@ export class CliAdapter extends PlatformAdapter {
           processing = true;
           try {
             if (text === "/") {
-              if (!hintWasVisible) {
-                this.printCommandHints();
-              }
+              this.printCommandHints();
               return;
             }
             if (["/exit", "/quit"].includes(text.toLowerCase())) {
@@ -459,14 +483,24 @@ export class CliAdapter extends PlatformAdapter {
 
   private clearCommandHints(
     terminal: readline.Interface,
-    lines: number,
+    _lines: number,
     lineSubmitted = false
   ): void {
-    readline.moveCursor(stdout, 0, -(lines + (lineSubmitted ? 1 : 0)));
-    readline.clearScreenDown(stdout);
-    if (!lineSubmitted) {
-      terminal.prompt(true);
+    if (lineSubmitted) {
+      // 回车后光标位于候选列表第一行，向上清理输入行和候选列表。
+      readline.cursorTo(stdout, 0);
+      readline.moveCursor(stdout, 0, -1);
+      readline.clearScreenDown(stdout);
+      return;
     }
+
+    // 只清理输入行下方的候选区域，并用相对移动恢复输入光标。
+    const cursor = terminal.getCursorPos();
+    readline.cursorTo(stdout, 0);
+    readline.moveCursor(stdout, 0, 1);
+    readline.clearScreenDown(stdout);
+    readline.moveCursor(stdout, 0, -1);
+    readline.cursorTo(stdout, cursor.cols);
   }
 
   private renderCommandHints(
@@ -480,14 +514,18 @@ export class CliAdapter extends PlatformAdapter {
     }
     const text = this.formatCommandHints(prefix, selectedIndex);
     if (!text) {
-      terminal.prompt(true);
       return 0;
     }
+
+    // 保持输入行和光标不动，只把候选命令写到下一行开始的位置。
+    const cursor = terminal.getCursorPos();
+    const lines = text.split("\n").length;
     readline.cursorTo(stdout, 0);
-    readline.clearLine(stdout, 0);
-    stdout.write(`${text}\n`);
-    terminal.prompt(true);
-    return text.split("\n").length;
+    readline.moveCursor(stdout, 0, 1);
+    stdout.write(text);
+    readline.moveCursor(stdout, 0, -lines);
+    readline.cursorTo(stdout, cursor.cols);
+    return lines;
   }
 
   private publishTurn(text: string): Promise<boolean> {

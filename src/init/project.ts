@@ -70,7 +70,5 @@ export function initializeProject(paths: InitializationPaths = DEFAULT_PATHS): v
   if (copyIfMissing(mcpExample, paths.mcpConfigPath)) {
     console.log(`已创建：${paths.mcpConfigPath}`);
   }
-  console.log(
-    "\n初始化完成。\n下一步：填写 config.toml 中的模型 API Key，然后运行 npm run dev -- chat"
-  );
+  console.log("\n初始化完成。\n下一步：填写 config.toml 中的模型 API Key，然后运行 npm run dev");
 }

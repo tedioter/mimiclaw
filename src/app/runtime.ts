@@ -5,10 +5,11 @@ import { ModelRuntime } from "../model/runtime.js";
 import {
   DEFAULT_CONFIG_PATH,
   loadConfig,
-  modelSelectionPath,
   recentMemoryPath,
+  resolveConfigPath,
   runtimeLogPath
 } from "../config/index.js";
+import { updateCurrentModel } from "../config/index.js";
 import { setLogFilePath } from "../utils/log.js";
 import type { AppConfig } from "../config/types.js";
 import { LongTermMemory } from "../memory/long-term-memory.js";
@@ -136,13 +137,16 @@ export async function createRuntime(
   requireModelKey = true,
   configPath: string = DEFAULT_CONFIG_PATH
 ): Promise<AgentRuntime> {
-  const config = loadConfig(configPath, requireModelKey);
+  const resolvedConfigPath = resolveConfigPath(configPath);
+  const config = loadConfig(resolvedConfigPath, requireModelKey);
   setLogFilePath(runtimeLogPath(config.dataDir));
   const { memory, registry } = await createMemoryAndTools(config);
   const bus = new MessageBus();
   let modelRuntime: ModelRuntime | undefined;
   try {
-    modelRuntime = new ModelRuntime(config.model, undefined, modelSelectionPath(config.dataDir));
+    modelRuntime = new ModelRuntime(config.model, undefined, (model) =>
+      updateCurrentModel(resolvedConfigPath, model)
+    );
     const agent = new Agent(modelRuntime, memory, registry);
     return new AgentRuntime(config, agent, bus);
   } catch (error) {

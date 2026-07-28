@@ -13,11 +13,11 @@
 
 1. 明确改动范围和影响的模块。
 2. 完成功能实现，并同步补充或调整测试。
-3. 运行与改动相关的检查；常规情况下至少运行：
-   - `npm run typecheck`
-   - `npm test`
-   - `npm run format:check`
-   - `npm run build`
+3. 采用分层验证：
+   - 完成一个小功能后，立即补充并运行与改动直接相关的测试；涉及 TypeScript 公共接口或配置时，同时运行 `npm run typecheck`。
+   - 完成一组相互关联的功能后，运行相关模块的集成测试，确认功能之间能协同工作。
+   - `npm run format:check` 可以延后到提交前的最终检查，不要求每个小功能完成后都运行；如果格式问题影响阅读或后续编辑，也可以提前运行。
+   - 提交前必须运行完整检查：`npm run typecheck`、`npm test`、`npm run format:check`、`npm run build`。
 4. 检查 `git diff`、`git diff --check` 和 `git status`，确认没有误提交的配置、密钥或无关文件。
 5. 验证通过后，**先向用户确认再提交**：说明 staging 范围、commit message（及架构 changelog 是否需更新），**未经用户明确同意不得执行 `git commit`**。若本次提交改变了模块职责、依赖关系、数据流或运行流程，**在同一次 commit 中**更新 [`docs/architecture-changelog.md`](docs/architecture-changelog.md)：新增一章，写清**相对上一提交**的架构差异；开发过程中不要提前写入未提交章节。
 6. 提交信息使用中文，并遵循 Conventional Commits 前缀，例如 `feat:`、`fix:`、`refactor:`、`docs:`。标题一行概括「为什么改」，正文补充关键影响；示例：
