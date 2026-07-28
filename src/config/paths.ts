@@ -38,6 +38,10 @@ export function recentMemoryPath(dataDir: string): string {
   return path.join(dataDir, "recent.json");
 }
 
+export function modelSelectionPath(dataDir: string): string {
+  return path.join(dataDir, "model-selection.json");
+}
+
 export function runtimeLogPath(dataDir: string): string {
   return path.join(dataDir, "runtime.log");
 }

@@ -19,7 +19,7 @@ import {
   isActorAllowed,
   type PlatformTextMessage
 } from "./base.js";
-import type { ModelControl, ModelInfo } from "./model-control.js";
+import type { ModelControl, ModelInfo, ModelVendor } from "./model-control.js";
 
 export type QQInboundMessage = {
   kind: "c2c" | "group" | "guild" | "dm";
@@ -485,62 +485,118 @@ export class QQAdapter extends PlatformAdapter {
       return;
     }
 
-    const models = modelControl.listModels();
-    const first = args[0]?.toLowerCase();
+    const vendors = modelControl.listVendors();
+    let commandArgs = [...args];
+    const first = commandArgs[0]?.toLowerCase();
     if (!first || first === "list") {
-      await this.sendModelCommandReply(client, replyTarget, this.formatModelList(models));
+      await this.sendModelCommandReply(client, replyTarget, this.formatVendorList(vendors));
       return;
     }
 
-    let id = args[0];
-    if (first === "use" || first === "switch") {
-      id = args[1];
+    if (first === "vendor" || first === "provider" || first === "use" || first === "switch") {
+      commandArgs = commandArgs.slice(1);
     }
-    if (!id) {
+
+    if (!commandArgs[0]) {
       await this.sendModelCommandReply(
         client,
         replyTarget,
-        "用法：/model [list] | /model <id> | /model switch <id>"
+        "用法：/model | /model <厂商> | /model <厂商> <模型>"
       );
       return;
     }
-    if (/^\d+$/.test(id)) {
-      const selected = models[Number(id) - 1];
-      if (!selected) {
+
+    const vendorArg = commandArgs[0];
+    const modelArg = commandArgs[1];
+    if (!vendorArg) {
+      await this.sendModelCommandReply(
+        client,
+        replyTarget,
+        "用法：/model | /model <厂商> | /model <厂商> <模型>"
+      );
+      return;
+    }
+
+    const vendor = this.findVendor(vendors, vendorArg);
+    if (commandArgs.length === 1 && vendor) {
+      await this.sendModelCommandReply(
+        client,
+        replyTarget,
+        this.formatModelList(vendor, modelControl.listModels(vendor.id))
+      );
+      return;
+    }
+
+    const selected =
+      commandArgs.length >= 2 && vendor && modelArg
+        ? this.findModel(modelControl.listModels(vendor.id), modelArg)
+        : this.findModel(modelControl.listModels(), vendorArg);
+    if (selected) {
+      try {
+        modelControl.switchModel(selected.id);
+        const active = modelControl.listModels().find((item) => item.active);
         await this.sendModelCommandReply(
           client,
           replyTarget,
-          `无效序号：${id}，当前共 ${models.length} 个模型 runtime。`
+          `已切换为 ${active?.vendorName ?? selected.vendorName} / ${active?.model ?? selected.model}，下一条私聊消息生效。`
         );
-        return;
+      } catch (error) {
+        const reason = error instanceof MimiError ? error.message : "切换模型失败";
+        await this.sendModelCommandReply(client, replyTarget, reason);
       }
-      id = selected.id;
+      return;
     }
 
-    try {
-      modelControl.switchModel(id);
-      const active = modelControl.listModels().find((item) => item.active);
-      await this.sendModelCommandReply(
-        client,
-        replyTarget,
-        `已切换为 ${active?.id ?? id}（${active?.model ?? id}），下一条私聊消息生效。`
-      );
-    } catch (error) {
-      const knownIds = models.map((item) => item.id).join("、");
-      const reason = error instanceof MimiError ? error.message : "切换模型失败";
-      await this.sendModelCommandReply(client, replyTarget, `${reason}（可用：${knownIds}）`);
-    }
+    await this.sendModelCommandReply(
+      client,
+      replyTarget,
+      "未找到对应厂商或模型。用法：/model <厂商> <模型>"
+    );
   }
 
-  private formatModelList(models: ModelInfo[]): string {
-    if (!models.length) {
-      return "当前未配置模型 runtime。";
+  private findVendor(vendors: ModelVendor[], value: string): ModelVendor | undefined {
+    if (/^\d+$/.test(value)) {
+      return vendors[Number(value) - 1];
     }
-    const lines = models.map((item) => {
+    const normalized = value.toLowerCase();
+    return vendors.find(
+      (item) => item.id.toLowerCase() === normalized || item.name.toLowerCase() === normalized
+    );
+  }
+
+  private findModel(models: ModelInfo[], value: string): ModelInfo | undefined {
+    if (/^\d+$/.test(value)) {
+      return models[Number(value) - 1];
+    }
+    const normalized = value.toLowerCase();
+    return models.find(
+      (item) =>
+        item.id.toLowerCase() === normalized ||
+        item.model.toLowerCase() === normalized ||
+        `${item.vendorId}/${item.model}`.toLowerCase() === normalized
+    );
+  }
+
+  private formatVendorList(vendors: ModelVendor[]): string {
+    if (!vendors.length) {
+      return "当前未配置模型厂商。";
+    }
+    const lines = vendors.map((item, index) => {
       const marker = item.active ? "* " : "  ";
-      return `${marker}${item.id}: ${item.model} (${item.baseUrl})`;
+      return `${marker}${index + 1}. ${item.name} (${item.id})，${item.modelCount} 个模型`;
     });
-    return `当前模型：\n${lines.join("\n")}\n\n切换用法：/model <id>`;
+    return `请选择模型厂商：\n${lines.join("\n")}\n\n查看模型：/model <厂商>\n切换模型：/model <厂商> <模型>`;
+  }
+
+  private formatModelList(vendor: ModelVendor, models: ModelInfo[]): string {
+    if (!models.length) {
+      return `${vendor.name} 当前没有可用模型。`;
+    }
+    const lines = models.map((item, index) => {
+      const marker = item.active ? "* " : "  ";
+      return `${marker}${index + 1}. ${item.model}`;
+    });
+    return `${vendor.name} 可用模型：\n${lines.join("\n")}\n\n切换模型：/model ${vendor.id} <模型>`;
   }
 
   private async sendModelCommandReply(

@@ -75,5 +75,6 @@ const isDirectRun =
   typeof process.argv[1] === "string" && import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (isDirectRun) {
-  await runMain();
+  // 长生命周期 CLI 不使用顶层 await，避免输入流结束时出现未收敛警告。
+  void runMain();
 }

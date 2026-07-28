@@ -5,6 +5,7 @@ import { ModelRuntime } from "../model/runtime.js";
 import {
   DEFAULT_CONFIG_PATH,
   loadConfig,
+  modelSelectionPath,
   recentMemoryPath,
   runtimeLogPath
 } from "../config/index.js";
@@ -16,7 +17,7 @@ import { ShortTermMemory } from "../memory/short-term-memory.js";
 import { createToolRegistry } from "../tools/toolregistry.js";
 import type { ToolRegistry } from "../tools/toolregistry.js";
 import type { AgentEvent } from "../types/events.js";
-import type { ModelRuntimeInfo } from "../model/runtime.js";
+import type { ModelRuntimeInfo, ModelVendorInfo } from "../model/runtime.js";
 
 export type AgentLoopControl = {
   isActive(): boolean;
@@ -88,8 +89,12 @@ export class AgentRuntime {
     return this.closePromise;
   }
 
-  listModels(): ModelRuntimeInfo[] {
-    return this.agent.modelRuntime.list();
+  listVendors(): ModelVendorInfo[] {
+    return this.agent.modelRuntime.listVendors();
+  }
+
+  listModels(vendorId?: string): ModelRuntimeInfo[] {
+    return this.agent.modelRuntime.list(vendorId);
   }
 
   switchModel(id: string): void {
@@ -137,7 +142,7 @@ export async function createRuntime(
   const bus = new MessageBus();
   let modelRuntime: ModelRuntime | undefined;
   try {
-    modelRuntime = new ModelRuntime(config.model);
+    modelRuntime = new ModelRuntime(config.model, undefined, modelSelectionPath(config.dataDir));
     const agent = new Agent(modelRuntime, memory, registry);
     return new AgentRuntime(config, agent, bus);
   } catch (error) {

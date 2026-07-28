@@ -248,12 +248,32 @@ function qqMessage(): QQInboundMessage {
 
 function qqModelControl() {
   const models = [
-    { id: "main", model: "main-model", baseUrl: "https://main.example.com", active: true },
-    { id: "fast", model: "fast-model", baseUrl: "https://fast.example.com", active: false }
+    {
+      id: "deepseek/main-model",
+      vendorId: "deepseek",
+      vendorName: "DeepSeek",
+      model: "main-model",
+      baseUrl: "https://main.example.com",
+      active: true
+    },
+    {
+      id: "deepseek/fast-model",
+      vendorId: "deepseek",
+      vendorName: "DeepSeek",
+      model: "fast-model",
+      baseUrl: "https://fast.example.com",
+      active: false
+    }
   ];
-  let activeId = "main";
+  let activeId = "deepseek/main-model";
   return {
-    listModels: () => models.map((item) => ({ ...item, active: item.id === activeId })),
+    listVendors: () => [
+      { id: "deepseek", name: "DeepSeek", modelCount: models.length, active: true }
+    ],
+    listModels: (vendorId?: string) =>
+      models
+        .filter((item) => !vendorId || item.vendorId === vendorId)
+        .map((item) => ({ ...item, active: item.id === activeId })),
     switchModel: (id: string): void => {
       if (!models.some((item) => item.id === id)) {
         throw new Error(`未知模型 runtime：${id}`);
@@ -270,12 +290,23 @@ describe("QQ 官方 SDK 适配", () => {
     const bus = new MessageBus();
     const adapter = new QQAdapter(bus, makeConfig(root).platform.qq, client, qqModelControl());
 
-    await adapter.receiveMessage({ ...qqMessage(), content: "/model fast", messageId: "model-1" });
-    await adapter.receiveMessage({ ...qqMessage(), content: "/model", messageId: "model-2" });
+    await adapter.receiveMessage({ ...qqMessage(), content: "/model", messageId: "model-1" });
+    await adapter.receiveMessage({
+      ...qqMessage(),
+      content: "/model deepseek",
+      messageId: "model-2"
+    });
+    await adapter.receiveMessage({
+      ...qqMessage(),
+      content: "/model deepseek fast-model",
+      messageId: "model-3"
+    });
 
-    expect(client.sent[0]).toContain("已切换为 fast");
-    expect(client.sent[0]).toContain("下一条私聊消息生效");
-    expect(client.sent[1]).toContain("* fast: fast-model");
+    expect(client.sent[0]).toContain("DeepSeek");
+    expect(client.sent[0]).toContain("查看模型：/model <厂商>");
+    expect(client.sent[1]).toContain("fast-model");
+    expect(client.sent[2]).toContain("已切换为 DeepSeek / fast-model");
+    expect(client.sent[2]).toContain("下一条私聊消息生效");
     expect(
       await Promise.race([bus.consumeInboundMessage().then(() => true), Promise.resolve(false)])
     ).toBe(false);

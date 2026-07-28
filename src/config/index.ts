@@ -6,6 +6,7 @@ export {
   DEFAULT_DATA_PATH,
   DEFAULT_MCP_CONFIG_PATH,
   PROJECT_ROOT,
+  modelSelectionPath,
   recentMemoryPath,
   runtimeLogPath,
   workspacePath

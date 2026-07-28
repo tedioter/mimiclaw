@@ -75,14 +75,25 @@ export async function terminalSelect(
   };
 
   return new Promise((resolve) => {
+    let settled = false;
     const cleanup = (value: string | undefined): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
       stdin.off("data", onData);
+      stdin.off("end", onInputClosed);
+      stdin.off("close", onInputClosed);
       stdin.pause();
       clearRenderedLines();
       if (stdin.isTTY) {
         stdin.setRawMode(previousRawMode);
       }
       resolve(value);
+    };
+
+    const onInputClosed = (): void => {
+      cleanup(undefined);
     };
 
     const onData = (chunk: string): void => {
@@ -116,6 +127,8 @@ export async function terminalSelect(
     stdin.resume();
     stdin.setEncoding("utf8");
     stdin.on("data", onData);
+    stdin.once("end", onInputClosed);
+    stdin.once("close", onInputClosed);
     render();
   });
 }

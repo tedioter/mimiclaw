@@ -196,6 +196,31 @@ function writeRuntimeConfig(root: string): string {
   return configPath;
 }
 
+function writeMultiModelRuntimeConfig(root: string): string {
+  fs.mkdirSync(path.join(root, "data"), { recursive: true });
+  fs.writeFileSync(path.join(root, "mcp.json"), '{"mcpServers": {}}\n');
+  const configPath = path.join(root, "config.toml");
+  fs.writeFileSync(
+    configPath,
+    [
+      `data_dir = "${path.join(root, "data").replace(/\\/g, "/")}"`,
+      "[model]",
+      'active = "deepseek/main-model"',
+      "",
+      "[model.vendors.deepseek]",
+      'name = "DeepSeek"',
+      'base_url = "https://example.com/v1"',
+      'api_key = "test-key"',
+      'models = ["main-model", "fast-model"]',
+      "",
+      "[mcp]",
+      `config_file = "${path.join(root, "mcp.json").replace(/\\/g, "/")}"`,
+      ""
+    ].join("\n")
+  );
+  return configPath;
+}
+
 describe("createRuntime", () => {
   it("从配置文件组装 AgentRuntime", async () => {
     const root = temporaryDirectory();
@@ -208,6 +233,25 @@ describe("createRuntime", () => {
       expect(runtime.bus).toBeDefined();
     } finally {
       await runtime.close();
+    }
+  });
+
+  it("模型切换在重启后恢复", async () => {
+    const root = temporaryDirectory();
+    const configPath = writeMultiModelRuntimeConfig(root);
+    const first = await createRuntime(true, configPath);
+    try {
+      first.switchModel("deepseek/fast-model");
+      expect(first.listModels().find((item) => item.active)?.model).toBe("fast-model");
+    } finally {
+      await first.close();
+    }
+
+    const second = await createRuntime(true, configPath);
+    try {
+      expect(second.listModels().find((item) => item.active)?.model).toBe("fast-model");
+    } finally {
+      await second.close();
     }
   });
 });

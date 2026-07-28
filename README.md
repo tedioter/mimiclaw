@@ -32,7 +32,7 @@ npm install
 npm run dev -- init
 ```
 
-填写 `config.toml` 中的 `model.api_key`，然后运行：
+填写 `config.toml` 中对应厂商的 `model.vendors.<厂商>.api_key`，然后运行：
 
 ```powershell
 npm run dev -- chat

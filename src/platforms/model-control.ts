@@ -1,11 +1,11 @@
-export type ModelInfo = {
-  id: string;
-  model: string;
-  baseUrl: string;
-  active: boolean;
-};
+import type { ModelRuntimeInfo, ModelVendorInfo } from "../model/runtime.js";
+
+export type ModelInfo = ModelRuntimeInfo;
+
+export type ModelVendor = ModelVendorInfo;
 
 export type ModelControl = {
-  listModels(): ModelInfo[];
+  listVendors(): ModelVendor[];
+  listModels(vendorId?: string): ModelRuntimeInfo[];
   switchModel(id: string): void;
 };

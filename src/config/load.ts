@@ -8,6 +8,7 @@ import type {
   McpConfig,
   MemoryConfig,
   ModelConfig,
+  ModelVendorConfig,
   ModelSectionConfig,
   PlatformConfig
 } from "./types.js";
@@ -32,14 +33,15 @@ import { DEFAULT_CONFIG_PATH, PROJECT_ROOT, projectPath, workspacePath } from ".
 function parseModelFieldsFromTable(
   runtimeTable: Table,
   labelPrefix: string,
-  requireModelKey: boolean
+  requireModelKey: boolean,
+  modelFallback?: string
 ): ModelConfig {
   const apiKey = configString(runtimeTable.api_key, "", `${labelPrefix}.api_key`);
   if (requireModelKey && !apiKey.trim()) {
     throw new ConfigError(`未配置模型密钥，请填写 config.toml 中的 ${labelPrefix}.api_key`);
   }
   const baseUrl = httpUrl(runtimeTable.base_url, `${labelPrefix}.base_url`);
-  const modelName = requiredString(runtimeTable.model, `${labelPrefix}.model`);
+  const modelName = requiredString(runtimeTable.model ?? modelFallback, `${labelPrefix}.model`);
   return {
     baseUrl: baseUrl.replace(/\/+$/, ""),
     apiKey,
@@ -55,8 +57,74 @@ function parseModelFieldsFromTable(
   };
 }
 
+function legacyModelVendors(
+  runtimes: Readonly<Record<string, ModelConfig>>
+): Readonly<Record<string, ModelVendorConfig>> {
+  return {
+    deepseek: {
+      name: "DeepSeek",
+      runtimeIds: Object.keys(runtimes)
+    }
+  };
+}
+
+function parseVendorModelSection(
+  raw: Table,
+  requireModelKey: boolean
+): ModelSectionConfig | undefined {
+  const modelTable = table(raw.model, "model");
+  const vendorsTable = modelTable.vendors;
+  if (!isRecord(vendorsTable) || Object.keys(vendorsTable).length === 0) {
+    return undefined;
+  }
+
+  const runtimes: Record<string, ModelConfig> = {};
+  const vendors: Record<string, ModelVendorConfig> = {};
+  for (const [vendorId, value] of Object.entries(vendorsTable)) {
+    if (!isRecord(value)) {
+      throw new ConfigError(`配置项 model.vendors.${vendorId} 必须是表`);
+    }
+    const vendorTable = value as Table;
+    const vendorName = configString(
+      vendorTable.name,
+      vendorId,
+      `model.vendors.${vendorId}.name`
+    ).trim();
+    const modelNames = [...stringSet(vendorTable.models, `model.vendors.${vendorId}.models`)];
+    if (!modelNames.length) {
+      throw new ConfigError(`配置项 model.vendors.${vendorId}.models 至少配置一个模型`);
+    }
+
+    const runtimeIds: string[] = [];
+    for (const modelName of modelNames) {
+      const runtimeId = `${vendorId}/${modelName}`;
+      if (runtimes[runtimeId]) {
+        throw new ConfigError(`配置项 model.vendors 中存在重复模型：${runtimeId}`);
+      }
+      runtimes[runtimeId] = parseModelFieldsFromTable(
+        { ...vendorTable, model: modelName },
+        `model.vendors.${vendorId}.models.${modelName}`,
+        requireModelKey
+      );
+      runtimeIds.push(runtimeId);
+    }
+    vendors[vendorId] = { name: vendorName || vendorId, runtimeIds };
+  }
+
+  const runtimeIds = Object.keys(runtimes);
+  const active = configString(modelTable.active, "", "model.active").trim() || runtimeIds[0] || "";
+  if (!runtimes[active]) {
+    throw new ConfigError(`model.active 指向未知模型：${active}`);
+  }
+  return { active, runtimes, vendors };
+}
+
 function parseModelSection(raw: Table, requireModelKey: boolean): ModelSectionConfig {
   const modelTable = table(raw.model, "model");
+  const vendorSection = parseVendorModelSection(raw, requireModelKey);
+  if (vendorSection) {
+    return vendorSection;
+  }
   const runtimesTable = modelTable.runtimes;
   if (isRecord(runtimesTable) && Object.keys(runtimesTable).length > 0) {
     const runtimes: Record<string, ModelConfig> = {};
@@ -72,10 +140,11 @@ function parseModelSection(raw: Table, requireModelKey: boolean): ModelSectionCo
     if (!runtimes[active]) {
       throw new ConfigError(`model.active 指向未知 runtime：${active}`);
     }
-    return { active, runtimes };
+    return { active, runtimes, vendors: legacyModelVendors(runtimes) };
   }
   const single = parseModelFieldsFromTable(modelTable, "model", requireModelKey);
-  return { active: "default", runtimes: { default: single } };
+  const runtimes = { default: single };
+  return { active: "default", runtimes, vendors: legacyModelVendors(runtimes) };
 }
 
 function parseDisplayConfig(raw: Table): DisplayConfig {

@@ -18,10 +18,17 @@ export type ModelConfig = {
   enableThinking: boolean;
 };
 
+/** 一个厂商下可供选择的模型 runtime。 */
+export type ModelVendorConfig = {
+  name: string;
+  runtimeIds: readonly string[];
+};
+
 /** [model] 段：active 指定当前对话 runtime，runtimes 为各模型实例配置。 */
 export type ModelSectionConfig = {
   active: string;
   runtimes: Readonly<Record<string, ModelConfig>>;
+  vendors?: Readonly<Record<string, ModelVendorConfig>>;
 };
 
 export type DisplayConfig = {
