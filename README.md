@@ -1,6 +1,6 @@
 # mimiclaw
 
-本地优先的个人 AI 助手。当前 `mimi` 命令入口提供 CLI 交互模式；QQ 和飞书适配器代码仍在仓库中，但当前入口未开放远程平台启动命令。
+本地优先的个人 AI 助手：CLI、QQ 私聊和飞书私聊共用同一套 Agent、人格、近期对话与长期记忆。
 
 ## 定位
 
@@ -17,10 +17,10 @@
 - 工具参数 Zod 校验、工作区真实路径隔离、网页 SSRF 防护、命令超时和输出截断
 - `SOUL.md` 人格、`USER.md` 用户资料、`MEMORY.md` 长期记忆（仅 `remember` 工具写入）与 `recent.json` 滑动窗口上下文压缩
 - MCP stdio、SSE 和 Streamable HTTP 客户端
-- 腾讯 `@tencent-connect/qqbot-nodejs` 与飞书官方 SDK 适配器（远程平台入口暂未开放）
+- 腾讯 `@tencent-connect/qqbot-nodejs` SDK（Gateway、自动重连、C2C 流式消息）与飞书官方 SDK（长连接、卡片更新）
 - 模型切换仅在 CLI 中提供；QQ 不再处理 `/model` 专用命令
 - CLI 斜杠命令候选：输入 `/` 查看命令，支持前缀过滤、方向键选择和 Esc 关闭
-- `init` 命令；直接执行 `mimi` 进入 CLI 交互模式
+- `init`、`chat`、`ask`、`serve`、`qq`、`feishu` 命令；直接执行 `mimi` 进入 CLI 交互模式
 
 ## 环境要求
 
@@ -38,7 +38,14 @@ npm run dev -- init
 
 ```powershell
 npm run dev
+npm run dev -- chat
+npm run dev -- ask "你好"
+npm run dev -- qq
+npm run dev -- feishu
+npm run dev -- serve
 ```
+
+不带参数的 `mimi` 或 `npm run dev` 默认启动 CLI；`chat` / `ask` 走 CLI 平台，`qq` / `feishu` 启动对应远程平台，`serve` 同时启动 QQ 与飞书。
 
 `npm run dev -- init` 会在项目根目录创建以下内容，已存在的文件不会覆盖：
 
@@ -46,7 +53,7 @@ npm run dev
 - `mcp.json`：MCP 配置
 - `data/SOUL.md`、`data/USER.md`、`data/MEMORY.md`：记忆与人格模板
 
-`mimi` 默认进入 CLI 交互模式，`mimi init` 与 `npm run dev -- init` 等价。
+`mimi` 默认进入 CLI 交互模式，`mimi init` 与 `npm run dev -- init` 等价；也可以使用 `mimi qq`、`mimi feishu` 或 `mimi serve` 启动 IM 平台。
 
 生产构建：
 
@@ -67,7 +74,7 @@ mimi
 
 ## CLI 命令
 
-直接运行 `npm run dev`、`npm start` 或已链接的 `mimi` 后进入交互模式：
+直接运行 `npm run dev`、`npm start` 或已链接的 `mimi` 后进入 CLI 交互模式：
 
 - 输入 `/` 查看 `/model`、`/exit` 和 `/quit` 候选
 - 输入部分前缀可过滤候选；使用 ↑↓ 选择，Enter 执行，Esc 关闭候选面板

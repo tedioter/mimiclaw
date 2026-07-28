@@ -7,7 +7,7 @@ import type { CliPlatformOptions } from "../platforms/cli.js";
 import { initializeProject } from "../init/index.js";
 import { type PlatformName, servePlatforms } from "./bootstrap.js";
 
-export const HELP_TEXT = "\u7528\u6cd5\uff1amimi [init]";
+export const HELP_TEXT = "\u7528\u6cd5\uff1amimi [init|chat|ask|serve|qq|feishu] [\u6587\u672c]";
 
 type ParsedCommand =
   | { kind: "help"; showHelp: boolean }
@@ -19,7 +19,7 @@ type ParsedCommand =
     };
 
 export function parseCommand(args: readonly string[]): ParsedCommand {
-  const [command] = args;
+  const [command, ...rest] = args;
   if (!command) {
     return { kind: "platform", platforms: ["cli"], cli: { mode: "chat" } };
   }
@@ -28,6 +28,25 @@ export function parseCommand(args: readonly string[]): ParsedCommand {
   }
   if (command === "init") {
     return { kind: "init" };
+  }
+  if (command === "chat") {
+    return { kind: "platform", platforms: ["cli"], cli: { mode: "chat" } };
+  }
+  if (command === "ask") {
+    if (!rest.length) {
+      throw new MimiError("ask 命令需要文本参数");
+    }
+    return {
+      kind: "platform",
+      platforms: ["cli"],
+      cli: { mode: "ask", text: rest.join(" ") }
+    };
+  }
+  if (command === "serve") {
+    return { kind: "platform", platforms: ["qq", "feishu"] };
+  }
+  if (command === "qq" || command === "feishu") {
+    return { kind: "platform", platforms: [command] };
   }
   throw new MimiError(`\u672a\u77e5\u547d\u4ee4\uff1a${command}`);
 }
