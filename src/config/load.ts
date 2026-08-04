@@ -77,8 +77,7 @@ function configuredCurrentModel(modelTable: Table): string {
 
 function resolveCurrentModel(
   value: string,
-  runtimes: Readonly<Record<string, ModelConfig>>,
-  aliases: Readonly<Record<string, string>> = {}
+  runtimes: Readonly<Record<string, ModelConfig>>
 ): string {
   const candidates = value.includes("/")
     ? [value, value.slice(value.lastIndexOf("/") + 1)]
@@ -88,10 +87,6 @@ function resolveCurrentModel(
     const model = Object.keys(runtimes).find((item) => item.toLowerCase() === normalized);
     if (model) {
       return model;
-    }
-    const alias = Object.entries(aliases).find(([key]) => key.toLowerCase() === normalized)?.[1];
-    if (alias) {
-      return alias;
     }
   }
   throw new ConfigError(`model.current_model 指向未知模型：${value}`);
@@ -166,7 +161,6 @@ function parseModelSection(raw: Table, requireModelKey: boolean): ModelSectionCo
   const runtimesTable = modelTable.runtimes;
   if (isRecord(runtimesTable) && Object.keys(runtimesTable).length > 0) {
     const runtimes: Record<string, ModelConfig> = {};
-    const aliases: Record<string, string> = {};
     for (const [id, value] of Object.entries(runtimesTable)) {
       if (!isRecord(value)) {
         throw new ConfigError(`配置项 model.runtimes.${id} 必须是表`);
@@ -179,16 +173,14 @@ function parseModelSection(raw: Table, requireModelKey: boolean): ModelSectionCo
         throw new ConfigError(`配置项 model.runtimes 中存在重复模型：${config.model}`);
       }
       runtimes[config.model] = config;
-      aliases[id] = config.model;
     }
     const modelNames = Object.keys(runtimes);
     const configured = configuredCurrentModel(modelTable);
-    const currentModel = resolveCurrentModel(configured || modelNames[0] || "", runtimes, aliases);
+    const currentModel = resolveCurrentModel(configured || modelNames[0] || "", runtimes);
     return {
       currentModel,
       runtimes,
-      vendors: legacyModelVendors(runtimes),
-      modelAliases: aliases
+      vendors: legacyModelVendors(runtimes)
     };
   }
   const single = parseModelFieldsFromTable(modelTable, "model", requireModelKey);
@@ -196,8 +188,7 @@ function parseModelSection(raw: Table, requireModelKey: boolean): ModelSectionCo
   return {
     currentModel: single.model,
     runtimes,
-    vendors: legacyModelVendors(runtimes),
-    modelAliases: { default: single.model }
+    vendors: legacyModelVendors(runtimes)
   };
 }
 

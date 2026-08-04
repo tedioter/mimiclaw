@@ -29,8 +29,6 @@ export type ModelSectionConfig = {
   currentModel: string;
   runtimes: Readonly<Record<string, ModelConfig>>;
   vendors?: Readonly<Record<string, ModelVendorConfig>>;
-  /** 旧 runtime 名称到模型名的迁移映射。 */
-  modelAliases?: Readonly<Record<string, string>>;
 };
 
 export type DisplayConfig = {

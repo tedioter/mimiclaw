@@ -3,7 +3,7 @@ import { ConfigError, MimiError } from "../types/errors.js";
 import type { Model } from "./model.js";
 import { OpenAICompatibleModel } from "./openai-compatible.js";
 
-export type ModelRuntimeInfo = {
+export type ModelRegistryInfo = {
   vendorId: string;
   vendorName: string;
   model: string;
@@ -24,13 +24,12 @@ export type ModelSelectionWriter = (model: string) => void;
 
 const defaultFactory: ModelFactory = (_model, config) => new OpenAICompatibleModel(config);
 
-/** 管理多个对话模型，切换模型只影响下一轮对话。 */
-export class ModelRuntime {
+/** 注册、池化多个对话模型，并维护当前选中项。 */
+export class ModelRegistry {
   private currentModel: string;
   private readonly configs: Readonly<Record<string, ModelConfig>>;
   private readonly selectionWriter: ModelSelectionWriter | undefined;
   private readonly vendors: Readonly<Record<string, ModelVendorConfig>>;
-  private readonly modelAliases: Readonly<Record<string, string>>;
   private readonly modelVendors = new Map<string, { id: string; name: string }>();
   private readonly instances = new Map<string, Model>();
   private closePromise?: Promise<void>;
@@ -42,7 +41,6 @@ export class ModelRuntime {
   ) {
     this.configs = section.runtimes;
     this.selectionWriter = selectionWriter;
-    this.modelAliases = section.modelAliases ?? {};
     this.currentModel = section.currentModel;
     if (!this.configs[this.currentModel]) {
       throw new ConfigError(`model.current_model 指向未知模型：${this.currentModel}`);
@@ -82,7 +80,7 @@ export class ModelRuntime {
     return this.getOrCreate(this.currentModel);
   }
 
-  list(vendorId?: string): ModelRuntimeInfo[] {
+  list(vendorId?: string): ModelRegistryInfo[] {
     const models = vendorId
       ? (this.vendors[this.resolveVendorId(vendorId) ?? ""]?.models ?? [])
       : Object.keys(this.configs);
@@ -133,12 +131,6 @@ export class ModelRuntime {
       );
       if (resolved) {
         return resolved;
-      }
-      const alias = Object.entries(this.modelAliases).find(
-        ([name]) => name.toLowerCase() === normalized
-      )?.[1];
-      if (alias && this.configs[alias]) {
-        return alias;
       }
     }
     return undefined;

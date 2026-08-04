@@ -28,7 +28,7 @@ export class Agent {
   ) {}
 
   /** 切换对话模型；仅在轮次之间调用，下一轮 respond 使用新模型。 */
-  changeModel(model: Model): void {
+  switchModel(model: Model): void {
     this.model = model;
   }
 

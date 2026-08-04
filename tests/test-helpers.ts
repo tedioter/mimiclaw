@@ -4,7 +4,7 @@ import path from "node:path";
 import { Agent } from "../src/agent/agent.js";
 import type { ToolConfig, AppConfig, ModelConfig } from "../src/config/types.js";
 import type { Model, ModelEvent, ModelMessage } from "../src/model/index.js";
-import { ModelRuntime } from "../src/model/runtime.js";
+import { ModelRegistry } from "../src/model/registry.js";
 import { LongTermMemory, Memory, ShortTermMemory } from "../src/memory/index.js";
 import { createTools, ToolRegistry } from "../src/tools/toolregistry.js";
 import type { Tool } from "../src/tools/base.js";
@@ -109,7 +109,7 @@ export function makeConfig(root: string, toolOverrides: Partial<ToolConfig> = {}
   };
 }
 
-export function createStubModelRegistry(model?: Model): ModelRuntime {
+export function createStubModelRegistry(model?: Model): ModelRegistry {
   const fallbackModel: Model = model ?? {
     async *streamChat() {},
     async close(): Promise<void> {}
@@ -122,7 +122,7 @@ export function createStubModelRegistry(model?: Model): ModelRuntime {
     switchModel: () => {},
     close: async () => {}
   };
-  return stub as unknown as ModelRuntime;
+  return stub as unknown as ModelRegistry;
 }
 
 export function createTestAgent(model: Model, memory: Memory, tools: ToolRegistry): Agent {

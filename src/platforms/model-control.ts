@@ -1,11 +1,11 @@
-import type { ModelRuntimeInfo, ModelVendorInfo } from "../model/runtime.js";
+import type { ModelRegistryInfo, ModelVendorInfo } from "../model/registry.js";
 
-export type ModelInfo = ModelRuntimeInfo;
+export type ModelInfo = ModelRegistryInfo;
 
 export type ModelVendor = ModelVendorInfo;
 
 export type ModelControl = {
   listVendors(): ModelVendor[];
-  listModels(vendorId?: string): ModelRuntimeInfo[];
+  listModels(vendorId?: string): ModelRegistryInfo[];
   switchModel(model: string): void;
 };

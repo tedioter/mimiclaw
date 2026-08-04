@@ -375,8 +375,8 @@ new Agent(model, memory, tools);
 
 ### 变更
 
-- `Agent` 恢复只依赖 `Model`、`Memory`、`ToolRegistry`；构造时注入当前 `Model`，通过 `changeModel()` 在轮次之间切换。
-- `ModelRuntime` 改由 `AgentRuntime` 以 `modelRegistry` 持有；`listModels()`、`switchModel()` 等控制面留在 App 层，切换时同步更新 registry 与 `agent.changeModel()`。
+- `Agent` 恢复只依赖 `Model`、`Memory`、`ToolRegistry`；构造时注入当前 `Model`，通过 `switchModel()` 在轮次之间切换。
+- `ModelRuntime` 改由 `AgentRuntime` 以 `modelRegistry` 持有；`listModels()`、`switchModel()` 等控制面留在 App 层，切换时同步更新 registry 与 `agent.switchModel()`。
 - `Agent.close()` 仅释放 tools；`modelRegistry.close()` 由 `AgentRuntime.close()` 负责。
 - 测试 helper 新增 `createStubModelRegistry()`，补齐 runtime 与 agent 分层相关用例。
 
@@ -385,6 +385,27 @@ new Agent(model, memory, tools);
 - Agent 推理路径不再感知多模型 registry，与文档中「Agent 只依赖 model、memory、tools」一致。
 - CLI `/model` 切换链路不变，仍经 `AgentRuntime.switchModel()` 持久化并更新 Agent 当前模型。
 - 模型切换语义为轮次之间生效；同一轮 `respond()` 与 `handleTurnDone()` 共用同一 `Model` 实例。
+
+### 暂未解决的问题
+
+- 模型厂商和模型列表仍由项目配置维护，尚未接入厂商模型发现 API。
+
+## 2026-08-04：ModelRegistry 命名统一并移除模型别名
+
+### 背景
+
+上一提交已将模型控制外提到 `AgentRuntime`，但实现类型仍称 `ModelRuntime`，与 App 层 `AgentRuntime` 易混淆；配置解析与 registry 仍保留 legacy 模型别名映射，而当前 `[model.vendors.*]` 写法并不使用。
+
+### 变更
+
+- `ModelRuntime` 重命名为 `ModelRegistry`，源码文件改为 `registry.ts`；`ModelRuntimeInfo` 改为 `ModelRegistryInfo`。
+- 移除 `modelAliases` / 别名解析；`current_model` 与 `switchModel()` 仅按完整模型名（及 `vendor/model` 路径截断、大小写不敏感）匹配。
+- `Agent.changeModel()` 统一为 `switchModel()`，与 App 层和 CLI 术语一致。
+
+### 影响
+
+- CLI `ModelControl` 与 `AgentRuntime` 继续经 `modelRegistry` 提供模型列举与切换，行为不变，仅类型命名更清晰。
+- 旧版 `[model.runtimes.*]` 配置不能再靠表名短名（如 `fast`）指向 `fast-model`，须使用真实模型名。
 
 ### 暂未解决的问题
 

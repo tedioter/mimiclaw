@@ -1,9 +1,9 @@
 export * from "./model.js";
 export { OpenAICompatibleModel } from "./openai-compatible.js";
 export {
-  ModelRuntime,
+  ModelRegistry,
   type ModelFactory,
-  type ModelRuntimeInfo,
+  type ModelRegistryInfo,
   type ModelSelectionWriter,
   type ModelVendorInfo
-} from "./runtime.js";
+} from "./registry.js";

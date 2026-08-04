@@ -257,7 +257,7 @@ describe("Agent 工具循环", () => {
     for await (const _event of agent.respond({ platform: "cli", text: "第一轮" })) {
       // 消费完整事件流
     }
-    agent.changeModel(modelB);
+    agent.switchModel(modelB);
     for await (const _event of agent.respond({ platform: "cli", text: "第二轮" })) {
       // 消费完整事件流
     }

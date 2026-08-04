@@ -133,7 +133,7 @@ describe("配置解析", () => {
       file,
       [
         "[model]",
-        'active = "fast"',
+        'current_model = "fast-model"',
         "",
         "[model.runtimes.main]",
         'base_url = "https://main.example.com/v1"',

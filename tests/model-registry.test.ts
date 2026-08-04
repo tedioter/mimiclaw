@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ModelRuntime } from "../src/model/runtime.js";
+import { ModelRegistry } from "../src/model/registry.js";
 import type { Model, ModelEvent, ModelMessage } from "../src/model/index.js";
 import { MimiError } from "../src/types/errors.js";
 import { makeModelConfig } from "./test-helpers.js";
@@ -27,59 +27,49 @@ function twoModelSection() {
   };
 }
 
-describe("ModelRuntime", () => {
+describe("ModelRegistry", () => {
   it("懒加载当前模型，并在切换后使用新模型", () => {
     const created: string[] = [];
-    const runtime = new ModelRuntime(twoModelSection(), (model) => {
+    const registry = new ModelRegistry(twoModelSection(), (model) => {
       created.push(model);
       return new TrackingModel(model);
     });
 
-    const first = runtime.getCurrent();
+    const first = registry.getCurrent();
     expect(first).toBeInstanceOf(TrackingModel);
     expect((first as TrackingModel).id).toBe("main-model");
     expect(created).toEqual(["main-model"]);
 
-    runtime.switchModel("fast-model");
-    expect(runtime.getCurrentModel()).toBe("fast-model");
-    const second = runtime.getCurrent();
+    registry.switchModel("fast-model");
+    expect(registry.getCurrentModel()).toBe("fast-model");
+    const second = registry.getCurrent();
     expect((second as TrackingModel).id).toBe("fast-model");
     expect(created).toEqual(["main-model", "fast-model"]);
   });
 
   it("切换成功后通过写入器持久化当前模型", () => {
     const written: string[] = [];
-    const runtime = new ModelRuntime(twoModelSection(), undefined, (model) => {
+    const registry = new ModelRegistry(twoModelSection(), undefined, (model) => {
       written.push(model);
     });
 
-    runtime.switchModel("fast-model");
+    registry.switchModel("fast-model");
 
     expect(written).toEqual(["fast-model"]);
-    expect(runtime.getCurrentModel()).toBe("fast-model");
+    expect(registry.getCurrentModel()).toBe("fast-model");
   });
 
   it("持久化失败时不改变内存中的当前模型", () => {
-    const runtime = new ModelRuntime(twoModelSection(), undefined, () => {
+    const registry = new ModelRegistry(twoModelSection(), undefined, () => {
       throw new MimiError("配置写入失败");
     });
 
-    expect(() => runtime.switchModel("fast-model")).toThrow("配置写入失败");
-    expect(runtime.getCurrentModel()).toBe("main-model");
-  });
-
-  it("按模型别名切换", () => {
-    const runtime = new ModelRuntime({
-      ...twoModelSection(),
-      modelAliases: { fast: "fast-model" }
-    });
-
-    runtime.switchModel("fast");
-    expect(runtime.getCurrentModel()).toBe("fast-model");
+    expect(() => registry.switchModel("fast-model")).toThrow("配置写入失败");
+    expect(registry.getCurrentModel()).toBe("main-model");
   });
 
   it("list 标记当前模型并返回各模型端点", () => {
-    const runtime = new ModelRuntime(
+    const registry = new ModelRegistry(
       {
         currentModel: "a-model",
         runtimes: {
@@ -96,7 +86,7 @@ describe("ModelRuntime", () => {
       () => new TrackingModel("x")
     );
 
-    expect(runtime.list()).toEqual([
+    expect(registry.list()).toEqual([
       {
         vendorId: "deepseek",
         vendorName: "DeepSeek",
@@ -115,7 +105,7 @@ describe("ModelRuntime", () => {
   });
 
   it("按厂商分组模型并标记当前厂商", () => {
-    const runtime = new ModelRuntime({
+    const registry = new ModelRegistry({
       currentModel: "deepseek-v4-pro",
       runtimes: {
         "deepseek-v4-pro": makeModelConfig({ model: "deepseek-v4-pro" }),
@@ -129,19 +119,19 @@ describe("ModelRuntime", () => {
       }
     });
 
-    expect(runtime.listVendors()).toEqual([
+    expect(registry.listVendors()).toEqual([
       { id: "deepseek", name: "DeepSeek", modelCount: 2, current: true }
     ]);
-    expect(runtime.list("deepseek").map((item) => [item.model, item.current])).toEqual([
+    expect(registry.list("deepseek").map((item) => [item.model, item.current])).toEqual([
       ["deepseek-v4-pro", true],
       ["deepseek-v4-flash", false]
     ]);
   });
 
-  it("拒绝未归属厂商的模型 runtime", () => {
+  it("拒绝未归属厂商的模型配置", () => {
     expect(
       () =>
-        new ModelRuntime({
+        new ModelRegistry({
           currentModel: "main-model",
           runtimes: { "main-model": makeModelConfig({ model: "main-model" }) },
           vendors: { deepseek: { name: "DeepSeek", models: [] } }
@@ -150,30 +140,30 @@ describe("ModelRuntime", () => {
   });
 
   it("拒绝切换到未知模型", () => {
-    const runtime = new ModelRuntime(
+    const registry = new ModelRegistry(
       { currentModel: "test", runtimes: { test: makeModelConfig() } },
       () => new TrackingModel("test")
     );
-    expect(() => runtime.switchModel("missing")).toThrow(MimiError);
+    expect(() => registry.switchModel("missing")).toThrow(MimiError);
   });
 
   it("按名称大小写不敏感地切换模型", () => {
-    const runtime = new ModelRuntime(twoModelSection(), (model) => new TrackingModel(model));
+    const registry = new ModelRegistry(twoModelSection(), (model) => new TrackingModel(model));
 
-    runtime.switchModel("FAST-MODEL");
-    expect(runtime.getCurrentModel()).toBe("fast-model");
-    expect((runtime.getCurrent() as TrackingModel).id).toBe("fast-model");
+    registry.switchModel("FAST-MODEL");
+    expect(registry.getCurrentModel()).toBe("fast-model");
+    expect((registry.getCurrent() as TrackingModel).id).toBe("fast-model");
   });
 
   it("close 只释放已经实例化的模型", async () => {
     const main = new TrackingModel("main");
     const fast = new TrackingModel("fast");
-    const runtime = new ModelRuntime(twoModelSection(), (model) =>
+    const registry = new ModelRegistry(twoModelSection(), (model) =>
       model === "main-model" ? main : fast
     );
 
-    runtime.getCurrent();
-    await runtime.close();
+    registry.getCurrent();
+    await registry.close();
     expect(main.close).toHaveBeenCalledOnce();
     expect(fast.close).not.toHaveBeenCalled();
   });

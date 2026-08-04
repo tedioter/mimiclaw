@@ -1,7 +1,7 @@
 import { Agent } from "../agent/agent.js";
 import { MessageBus, MessageBusClosedError } from "../bus/message-bus.js";
 import { runShutdownSteps } from "../utils/shutdown.js";
-import { ModelRuntime } from "../model/runtime.js";
+import { ModelRegistry } from "../model/registry.js";
 import {
   DEFAULT_CONFIG_PATH,
   loadConfig,
@@ -18,7 +18,7 @@ import { ShortTermMemory } from "../memory/short-term-memory.js";
 import { createToolRegistry } from "../tools/toolregistry.js";
 import type { ToolRegistry } from "../tools/toolregistry.js";
 import type { AgentEvent } from "../types/events.js";
-import type { ModelRuntimeInfo, ModelVendorInfo } from "../model/runtime.js";
+import type { ModelRegistryInfo, ModelVendorInfo } from "../model/registry.js";
 
 export type AgentLoopControl = {
   isActive(): boolean;
@@ -52,7 +52,7 @@ export class AgentRuntime {
   constructor(
     readonly config: AppConfig,
     readonly agent: Agent,
-    readonly modelRegistry: ModelRuntime,
+    readonly modelRegistry: ModelRegistry,
     readonly bus: MessageBus
   ) {}
 
@@ -95,13 +95,13 @@ export class AgentRuntime {
     return this.modelRegistry.listVendors();
   }
 
-  listModels(vendorId?: string): ModelRuntimeInfo[] {
+  listModels(vendorId?: string): ModelRegistryInfo[] {
     return this.modelRegistry.list(vendorId);
   }
 
   switchModel(model: string): void {
     this.modelRegistry.switchModel(model);
-    this.agent.changeModel(this.modelRegistry.getCurrent());
+    this.agent.switchModel(this.modelRegistry.getCurrent());
   }
 
   private async closeResources(): Promise<void> {
@@ -147,9 +147,9 @@ export async function createRuntime(
   setLogFilePath(runtimeLogPath(config.dataDir));
   const { memory, registry } = await createMemoryAndTools(config);
   const bus = new MessageBus();
-  let modelRegistry: ModelRuntime | undefined;
+  let modelRegistry: ModelRegistry | undefined;
   try {
-    modelRegistry = new ModelRuntime(config.model, undefined, (model) =>
+    modelRegistry = new ModelRegistry(config.model, undefined, (model) =>
       updateCurrentModel(resolvedConfigPath, model)
     );
     const agent = new Agent(modelRegistry.getCurrent(), memory, registry);
