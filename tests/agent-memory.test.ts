@@ -16,6 +16,7 @@ import {
 import { ToolRegistry } from "../src/tools/index.js";
 import {
   cleanupTemporaryDirectories,
+  createStubModelRegistry,
   createTestAgent,
   FakeModel,
   makeConfig,
@@ -115,7 +116,7 @@ describe("Agent 记忆", () => {
     const model = new FakeModel([[{ type: "model_text_delta", text: "下一轮回复" }]]);
     const memory = createMemory(root);
     const agent = createTestAgent(model, memory, new ToolRegistry([]));
-    const runtime = new AgentRuntime(config, agent, new MessageBus());
+    const runtime = new AgentRuntime(config, agent, createStubModelRegistry(), new MessageBus());
 
     try {
       await memory.longTerm.replaceMemory("更新后的记忆");
@@ -226,7 +227,7 @@ describe("Agent 记忆", () => {
       new MemoryStoreError("模拟记忆写入失败")
     );
     const agent = createTestAgent(model, memory, new ToolRegistry([]));
-    const runtime = new AgentRuntime(config, agent, new MessageBus());
+    const runtime = new AgentRuntime(config, agent, createStubModelRegistry(), new MessageBus());
     const logPath = useTestLogFile(root);
 
     const events = await consumeTurn(agent, "测试记忆故障");

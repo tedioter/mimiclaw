@@ -52,6 +52,7 @@ export class AgentRuntime {
   constructor(
     readonly config: AppConfig,
     readonly agent: Agent,
+    readonly modelRegistry: ModelRuntime,
     readonly bus: MessageBus
   ) {}
 
@@ -91,15 +92,16 @@ export class AgentRuntime {
   }
 
   listVendors(): ModelVendorInfo[] {
-    return this.agent.modelRuntime.listVendors();
+    return this.modelRegistry.listVendors();
   }
 
   listModels(vendorId?: string): ModelRuntimeInfo[] {
-    return this.agent.modelRuntime.list(vendorId);
+    return this.modelRegistry.list(vendorId);
   }
 
   switchModel(model: string): void {
-    this.agent.modelRuntime.switchModel(model);
+    this.modelRegistry.switchModel(model);
+    this.agent.changeModel(this.modelRegistry.getCurrent());
   }
 
   private async closeResources(): Promise<void> {
@@ -110,6 +112,9 @@ export class AgentRuntime {
         },
         async () => {
           await this.agent.close();
+        },
+        async () => {
+          await this.modelRegistry.close();
         }
       ],
       "运行时资源关闭失败"
@@ -142,15 +147,15 @@ export async function createRuntime(
   setLogFilePath(runtimeLogPath(config.dataDir));
   const { memory, registry } = await createMemoryAndTools(config);
   const bus = new MessageBus();
-  let modelRuntime: ModelRuntime | undefined;
+  let modelRegistry: ModelRuntime | undefined;
   try {
-    modelRuntime = new ModelRuntime(config.model, undefined, (model) =>
+    modelRegistry = new ModelRuntime(config.model, undefined, (model) =>
       updateCurrentModel(resolvedConfigPath, model)
     );
-    const agent = new Agent(modelRuntime, memory, registry);
-    return new AgentRuntime(config, agent, bus);
+    const agent = new Agent(modelRegistry.getCurrent(), memory, registry);
+    return new AgentRuntime(config, agent, modelRegistry, bus);
   } catch (error) {
-    await Promise.allSettled([registry.close(), ...(modelRuntime ? [modelRuntime.close()] : [])]);
+    await Promise.allSettled([registry.close(), ...(modelRegistry ? [modelRegistry.close()] : [])]);
     throw error;
   }
 }

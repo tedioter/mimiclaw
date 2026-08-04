@@ -367,6 +367,29 @@ new Agent(model, memory, tools);
 
 - 模型厂商和模型列表仍由项目配置维护，尚未接入厂商模型发现 API。
 
+## 2026-08-04：Agent 模型依赖外提与 ModelRegistry 归 App 层
+
+### 背景
+
+上一提交中 `Agent` 直接持有 `ModelRuntime`，模型列举、切换与实例池化能力与推理核绑在一起；`AgentRuntime` 还需通过 `agent.modelRuntime` 访问模型控制，边界不清晰。
+
+### 变更
+
+- `Agent` 恢复只依赖 `Model`、`Memory`、`ToolRegistry`；构造时注入当前 `Model`，通过 `changeModel()` 在轮次之间切换。
+- `ModelRuntime` 改由 `AgentRuntime` 以 `modelRegistry` 持有；`listModels()`、`switchModel()` 等控制面留在 App 层，切换时同步更新 registry 与 `agent.changeModel()`。
+- `Agent.close()` 仅释放 tools；`modelRegistry.close()` 由 `AgentRuntime.close()` 负责。
+- 测试 helper 新增 `createStubModelRegistry()`，补齐 runtime 与 agent 分层相关用例。
+
+### 影响
+
+- Agent 推理路径不再感知多模型 registry，与文档中「Agent 只依赖 model、memory、tools」一致。
+- CLI `/model` 切换链路不变，仍经 `AgentRuntime.switchModel()` 持久化并更新 Agent 当前模型。
+- 模型切换语义为轮次之间生效；同一轮 `respond()` 与 `handleTurnDone()` 共用同一 `Model` 实例。
+
+### 暂未解决的问题
+
+- 模型厂商和模型列表仍由项目配置维护，尚未接入厂商模型发现 API。
+
 ## 后续记录格式
 
 提交架构相关改动时，在**同一次 commit** 中追加章节，结构如下：

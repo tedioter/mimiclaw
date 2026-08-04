@@ -13,7 +13,6 @@ import {
 } from "../utils/log.js";
 import { buildTurnId } from "../utils/turn-id.js";
 import type { Model, ModelMessage } from "../model/index.js";
-import { ModelRuntime } from "../model/runtime.js";
 import { buildPromptContext } from "./prompt.js";
 import { turnDoneHandler } from "./turn-done-handler.js";
 import { executeToolCall, formatToolIntent, parsePendingToolCalls } from "./tool-executor.js";
@@ -21,30 +20,28 @@ import { executeToolCall, formatToolIntent, parsePendingToolCalls } from "./tool
 export class Agent {
   private readonly turnLock = new AsyncMutexLock();
   private closePromise?: Promise<void>;
-  /** 当前轮次绑定的对话模型，供 turn_done 压缩复用同一实例。 */
-  private lastTurnModel?: Model;
 
   constructor(
-    readonly modelRuntime: ModelRuntime,
+    private model: Model,
     readonly memory: Memory,
     readonly tools: ToolRegistry
   ) {}
 
+  /** 切换对话模型；仅在轮次之间调用，下一轮 respond 使用新模型。 */
+  changeModel(model: Model): void {
+    this.model = model;
+  }
+
   close(): Promise<void> {
-    this.closePromise ??= Promise.all([this.tools.close(), this.modelRuntime.close()]).then(
-      () => {}
-    );
+    this.closePromise ??= this.tools.close().then(() => {});
     return this.closePromise;
   }
 
   async handleTurnDone(inbound: InboundMessage, assistantReply: string): Promise<void> {
-    const model = this.lastTurnModel ?? this.modelRuntime.getCurrent();
-    await turnDoneHandler(model, this.memory, inbound, assistantReply);
+    await turnDoneHandler(this.model, this.memory, inbound, assistantReply);
   }
 
   async *respond(inbound: InboundMessage): AsyncIterable<AgentEvent> {
-    const model = this.modelRuntime.getCurrent();
-    this.lastTurnModel = model;
     const turnId = buildTurnId(inbound);
     writeLog("info", "user", {
       turnId,
@@ -65,7 +62,7 @@ export class Agent {
           responseText.length = 0;
           reasoningText.length = 0;
           const pendingToolCalls = new Map<number, PendingToolCall>();
-          for await (const event of model.streamChat(messages, this.tools.schemas())) {
+          for await (const event of this.model.streamChat(messages, this.tools.schemas())) {
             if (event.type === "model_thinking_delta") {
               reasoningText.push(event.text);
               yield { type: "thinking_delta", text: event.text };

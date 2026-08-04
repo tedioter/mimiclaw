@@ -26,7 +26,12 @@ import {
   type QQInboundMessage,
   type QQStreamLike
 } from "../src/platforms/qq.js";
-import { cleanupTemporaryDirectories, makeConfig, temporaryDirectory } from "./test-helpers.js";
+import {
+  cleanupTemporaryDirectories,
+  createStubModelRegistry,
+  makeConfig,
+  temporaryDirectory
+} from "./test-helpers.js";
 
 afterEach(cleanupTemporaryDirectories);
 
@@ -44,7 +49,12 @@ async function driveBusTurn(
   });
   const loopControl = createAgentLoopControl();
   const agent = { respond, handleTurnDone: async () => {} } as unknown as Agent;
-  const runtime = new AgentRuntime(makeConfig(temporaryDirectory()), agent, bus);
+  const runtime = new AgentRuntime(
+    makeConfig(temporaryDirectory()),
+    agent,
+    createStubModelRegistry(),
+    bus
+  );
   const agentLoop = runtime.runLoop(loopControl);
   const dispatchLoop = bus.dispatchHandlers();
   try {
@@ -453,7 +463,12 @@ async function driveFeishuBusTurn(
   });
   const loopControl = createAgentLoopControl();
   const agent = { respond, handleTurnDone: async () => {} } as unknown as Agent;
-  const runtime = new AgentRuntime(makeConfig(temporaryDirectory()), agent, bus);
+  const runtime = new AgentRuntime(
+    makeConfig(temporaryDirectory()),
+    agent,
+    createStubModelRegistry(),
+    bus
+  );
   const agentLoop = runtime.runLoop(loopControl);
   const dispatchLoop = bus.dispatchHandlers();
   try {

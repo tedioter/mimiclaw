@@ -12,14 +12,12 @@ import {
   FakeModel,
   cleanupTemporaryDirectories,
   createTestAgent,
-  makeModelConfig,
   readLogFile,
   temporaryDirectory,
   testTool,
   useTestLogFile
 } from "./test-helpers.js";
 import { Agent } from "../src/agent/agent.js";
-import { ModelRuntime } from "../src/model/runtime.js";
 
 afterEach(cleanupTemporaryDirectories);
 
@@ -46,17 +44,17 @@ function createCountingTool() {
 }
 
 describe("Agent 工具循环", () => {
-  it("关闭时只释放一次所拥有的模型", async () => {
+  it("关闭时只释放一次工具注册表", async () => {
     const root = temporaryDirectory();
     const model = new FakeModel([]);
-    const close = vi.spyOn(model, "close");
-    const agent = createTestAgent(model, createMemory(root), new ToolRegistry([]));
-    agent.modelRuntime.getCurrent();
+    const tools = new ToolRegistry([]);
+    const closeTools = vi.spyOn(tools, "close").mockResolvedValue(undefined);
+    const agent = createTestAgent(model, createMemory(root), tools);
 
     await Promise.all([agent.close(), agent.close()]);
     await agent.close();
 
-    expect(close).toHaveBeenCalledOnce();
+    expect(closeTools).toHaveBeenCalledOnce();
   });
 
   it("工具循环回传 reasoning_content 供思考模式下的后续请求", async () => {
@@ -250,26 +248,16 @@ describe("Agent 工具循环", () => {
     ).toEqual(["tool_resolution_error", "tool_argument_error"]);
   });
 
-  it("切换 active runtime 后下一轮 respond 使用新模型", async () => {
+  it("切换模型后下一轮 respond 使用新模型", async () => {
     const root = temporaryDirectory();
     const modelA = new FakeModel([[{ type: "model_text_delta", text: "A" }]]);
     const modelB = new FakeModel([[{ type: "model_text_delta", text: "B" }]]);
-    const modelRuntime = new ModelRuntime(
-      {
-        currentModel: "a",
-        runtimes: {
-          a: makeModelConfig({ model: "a" }),
-          b: makeModelConfig({ model: "b" })
-        }
-      },
-      (id) => (id === "a" ? modelA : modelB)
-    );
-    const agent = new Agent(modelRuntime, createMemory(root), new ToolRegistry([]));
+    const agent = new Agent(modelA, createMemory(root), new ToolRegistry([]));
 
     for await (const _event of agent.respond({ platform: "cli", text: "第一轮" })) {
       // 消费完整事件流
     }
-    modelRuntime.switchModel("b");
+    agent.changeModel(modelB);
     for await (const _event of agent.respond({ platform: "cli", text: "第二轮" })) {
       // 消费完整事件流
     }

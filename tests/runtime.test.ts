@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import type { Agent } from "../src/agent/agent.js";
@@ -13,7 +13,7 @@ import type { InboundMessage } from "../src/bus/message-bus.js";
 import type { AgentEvent } from "../src/types/events.js";
 import { createDeferred } from "../src/utils/async.js";
 import { getCurrentModelConfig } from "../src/config/index.js";
-import { makeConfig, temporaryDirectory } from "./test-helpers.js";
+import { makeConfig, createStubModelRegistry, temporaryDirectory } from "./test-helpers.js";
 
 function mockAgent(
   respond: (inbound: InboundMessage) => AsyncIterable<AgentEvent>,
@@ -49,7 +49,12 @@ describe("Agent 应用层运行循环", () => {
         committed.resolve({ inbound: received, assistantReply });
       }
     );
-    const runtime = new AgentRuntime(makeConfig(temporaryDirectory()), agent, bus);
+    const runtime = new AgentRuntime(
+      makeConfig(temporaryDirectory()),
+      agent,
+      createStubModelRegistry(),
+      bus
+    );
     const agentTask = runtime.runLoop(control);
     const dispatchTask = bus.dispatchHandlers();
 
@@ -90,7 +95,12 @@ describe("Agent 应用层运行循环", () => {
         committed.resolve({ inbound: received, assistantReply });
       }
     );
-    const runtime = new AgentRuntime(makeConfig(temporaryDirectory()), agent, bus);
+    const runtime = new AgentRuntime(
+      makeConfig(temporaryDirectory()),
+      agent,
+      createStubModelRegistry(),
+      bus
+    );
     const agentTask = runtime.runLoop(control);
     const dispatchTask = bus.dispatchHandlers();
 
@@ -133,7 +143,7 @@ describe("Agent 应用层运行循环", () => {
     });
     const config = makeConfig(temporaryDirectory());
     config.display = { showThinking: false, showToolCalls: false };
-    const runtime = new AgentRuntime(config, agent, bus);
+    const runtime = new AgentRuntime(config, agent, createStubModelRegistry(), bus);
     const agentTask = runtime.runLoop(control);
     const dispatchTask = bus.dispatchHandlers();
 
@@ -229,6 +239,7 @@ describe("createRuntime", () => {
     try {
       expect(getCurrentModelConfig(runtime.config.model).model).toBe("demo");
       expect(runtime.listModels().some((item) => item.current && item.model === "demo")).toBe(true);
+      expect(runtime.modelRegistry).toBeDefined();
       expect(runtime.agent).toBeDefined();
       expect(runtime.bus).toBeDefined();
     } finally {
@@ -254,5 +265,14 @@ describe("createRuntime", () => {
     } finally {
       await second.close();
     }
+  });
+
+  it("close 时释放模型注册表", async () => {
+    const root = temporaryDirectory();
+    const configPath = writeRuntimeConfig(root);
+    const runtime = await createRuntime(true, configPath);
+    const closeSpy = vi.spyOn(runtime.modelRegistry, "close");
+    await runtime.close();
+    expect(closeSpy).toHaveBeenCalledOnce();
   });
 });

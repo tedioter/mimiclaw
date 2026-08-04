@@ -109,15 +109,24 @@ export function makeConfig(root: string, toolOverrides: Partial<ToolConfig> = {}
   };
 }
 
+export function createStubModelRegistry(model?: Model): ModelRuntime {
+  const fallbackModel: Model = model ?? {
+    async *streamChat() {},
+    async close(): Promise<void> {}
+  };
+  const stub = {
+    getCurrent: () => fallbackModel,
+    getCurrentModel: () => "test",
+    list: () => [],
+    listVendors: () => [],
+    switchModel: () => {},
+    close: async () => {}
+  };
+  return stub as unknown as ModelRuntime;
+}
+
 export function createTestAgent(model: Model, memory: Memory, tools: ToolRegistry): Agent {
-  const modelRuntime = new ModelRuntime(
-    {
-      currentModel: "test",
-      runtimes: { test: makeModelConfig() }
-    },
-    () => model
-  );
-  return new Agent(modelRuntime, memory, tools);
+  return new Agent(model, memory, tools);
 }
 
 export class FakeModel implements Model {
