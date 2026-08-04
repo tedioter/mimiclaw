@@ -30,10 +30,16 @@ export function resolveSlashSubmission(
   line: string,
   candidates: readonly { command: string }[],
   selectedIndex: number,
-  selectionExplicit: boolean
+  selectionExplicit: boolean,
+  hintsVisible = false
 ): string {
-  if (line.trim() === "/" && !selectionExplicit) {
-    return line.trim();
+  const trimmed = line.trim();
+  // 候选可见时 Enter 提交高亮项；仅在没有候选时把单独 "/" 当作帮助命令。
+  if (trimmed === "/" && !selectionExplicit && !hintsVisible) {
+    return trimmed;
+  }
+  if (hintsVisible && candidates.length > 0) {
+    return (candidates[selectedIndex]?.command ?? candidates[0]?.command ?? line).trim();
   }
   return (candidates[selectedIndex]?.command ?? candidates[0]?.command ?? line).trim();
 }
@@ -109,37 +115,37 @@ export class CliAdapter extends PlatformAdapter {
       let commandHintIndex = 0;
       let commandHintSelectionExplicit = false;
       let commandHintRefreshScheduled = false;
+      /** 正在用 ↑↓ 浏览历史时，不展示 slash 候选，避免 /model 等命令劫持方向键。 */
+      let browsingHistory = false;
       const commandHistory = new CommandHistory();
+      const clearCommandHintState = (): void => {
+        if (commandHintLines > 0) {
+          this.clearCommandHints(terminal, commandHintLines);
+          commandHintLines = 0;
+        }
+        commandHintPrefix = "";
+        commandHintIndex = 0;
+        commandHintSelectionExplicit = false;
+      };
       const refreshCommandHints = (): void => {
-        if (commandHintRefreshScheduled) {
+        if (commandHintRefreshScheduled || browsingHistory) {
           return;
         }
         commandHintRefreshScheduled = true;
         setImmediate(() => {
           commandHintRefreshScheduled = false;
-          if (processing || this.stopping || settled) {
+          if (processing || this.stopping || settled || browsingHistory) {
             return;
           }
           const currentLine = terminal.line;
           if (!currentLine.startsWith("/") || /\s/.test(currentLine)) {
-            if (commandHintLines > 0) {
-              this.clearCommandHints(terminal, commandHintLines);
-              commandHintLines = 0;
-              commandHintPrefix = "";
-              commandHintIndex = 0;
-              commandHintSelectionExplicit = false;
-            }
+            clearCommandHintState();
             return;
           }
           const candidates = this.getCommandCandidates(currentLine);
           if (!candidates.length) {
-            if (commandHintLines > 0) {
-              this.clearCommandHints(terminal, commandHintLines);
-              commandHintLines = 0;
-            }
+            clearCommandHintState();
             commandHintPrefix = currentLine;
-            commandHintIndex = 0;
-            commandHintSelectionExplicit = false;
             return;
           }
           if (currentLine !== commandHintPrefix) {
@@ -166,7 +172,11 @@ export class CliAdapter extends PlatformAdapter {
         }
         if (key.name === "up" || key.name === "down") {
           const candidates = this.getCommandCandidates(terminal.line);
-          if ((commandHintLines > 0 || commandHintRefreshScheduled) && candidates.length > 0) {
+          if (
+            !browsingHistory &&
+            (commandHintLines > 0 || commandHintRefreshScheduled) &&
+            candidates.length > 0
+          ) {
             const delta = key.name === "up" ? -1 : 1;
             commandHintIndex = (commandHintIndex + delta + candidates.length) % candidates.length;
             commandHintSelectionExplicit = true;
@@ -179,20 +189,18 @@ export class CliAdapter extends PlatformAdapter {
             commandHintPrefix = terminal.line;
             return;
           }
+          browsingHistory = true;
+          clearCommandHintState();
           const previousLine = commandHistory.navigate(key.name, terminal.line);
           terminal.write(null, { ctrl: true, name: "u" });
           terminal.write(previousLine);
-          refreshCommandHints();
           return;
         }
-        if (key.name === "escape" && commandHintLines > 0) {
-          this.clearCommandHints(terminal, commandHintLines);
-          commandHintLines = 0;
-          commandHintPrefix = "";
-          commandHintIndex = 0;
-          commandHintSelectionExplicit = false;
+        // Esc 留给模型选择器取消；slash 候选随输入变化，不用 Esc 关闭。
+        if (key.name === "return") {
           return;
         }
+        browsingHistory = false;
         commandHistory.reset(terminal.line);
         if (terminal.line !== commandHintPrefix) {
           commandHintSelectionExplicit = false;
@@ -227,6 +235,8 @@ export class CliAdapter extends PlatformAdapter {
           showPrompt();
           return;
         }
+        browsingHistory = false;
+        commandHintRefreshScheduled = false;
         void (async () => {
           const candidates = this.getCommandCandidates(line);
           const hintWasVisible = commandHintLines > 0;
@@ -236,7 +246,8 @@ export class CliAdapter extends PlatformAdapter {
             line,
             candidates,
             commandHintIndex,
-            selectionExplicit
+            selectionExplicit,
+            hintWasVisible
           );
           if (hintWasVisible) {
             this.clearCommandHints(terminal, commandHintLines, true);
@@ -481,20 +492,7 @@ export class CliAdapter extends PlatformAdapter {
       .join("\n");
   }
 
-  private clearCommandHints(
-    terminal: readline.Interface,
-    _lines: number,
-    lineSubmitted = false
-  ): void {
-    if (lineSubmitted) {
-      // 回车后光标位于候选列表第一行，向上清理输入行和候选列表。
-      readline.cursorTo(stdout, 0);
-      readline.moveCursor(stdout, 0, -1);
-      readline.clearScreenDown(stdout);
-      return;
-    }
-
-    // 只清理输入行下方的候选区域，并用相对移动恢复输入光标。
+  private clearHintsBelowInput(terminal: readline.Interface): void {
     const cursor = terminal.getCursorPos();
     readline.cursorTo(stdout, 0);
     readline.moveCursor(stdout, 0, 1);
@@ -503,15 +501,32 @@ export class CliAdapter extends PlatformAdapter {
     readline.cursorTo(stdout, cursor.cols);
   }
 
+  private clearCommandHints(
+    terminal: readline.Interface,
+    lines: number,
+    lineSubmitted = false
+  ): void {
+    if (lineSubmitted) {
+      if (lines <= 0) {
+        return;
+      }
+      // 回车后光标在新 prompt 行，候选列表在其上方 lines 行。
+      readline.cursorTo(stdout, 0);
+      readline.moveCursor(stdout, 0, -lines);
+      readline.clearScreenDown(stdout);
+      return;
+    }
+
+    this.clearHintsBelowInput(terminal);
+  }
+
   private renderCommandHints(
     terminal: readline.Interface,
     prefix: string,
-    previousLines: number,
+    _previousLines: number,
     selectedIndex = 0
   ): number {
-    if (previousLines > 0) {
-      this.clearCommandHints(terminal, previousLines);
-    }
+    this.clearHintsBelowInput(terminal);
     const text = this.formatCommandHints(prefix, selectedIndex);
     if (!text) {
       return 0;

@@ -411,6 +411,27 @@ new Agent(model, memory, tools);
 
 - 模型厂商和模型列表仍由项目配置维护，尚未接入厂商模型发现 API。
 
+## 2026-08-04：失败轮次写入短期记忆，CLI 与启动包装修正
+
+### 背景
+
+模型请求在工具轮后失败（如 HTTP 503）时只产出 `turn_error`，`AgentRuntime` 仅在 `turn_done` 时提交近期记忆，导致用户任务从 `recent.json` 丢失，下一轮「继续」接错上下文。同时 CLI 斜杠候选与命令历史互相劫持，`mimi`/`npm start` 依赖过期 `dist`。
+
+### 变更
+
+- `AgentRuntime.runLoop`：`turn_error` 也调用 `handleTurnDone(inbound, event.message)`，把失败摘要写入短期记忆。
+- CLI：历史上翻不触发 slash 候选；候选可见时 Enter 提交高亮命令；候选清屏按真实行数清理。
+- `scripts/mimi.mjs`：`mimi` / `npm start` 先增量 `tsc` 再启动，避免跑旧编译产物。
+
+### 影响
+
+- 失败轮次会进入 `recent.json`，下一轮能看到用户请求与错误信息；不恢复工具输出本身。
+- 全局 `mimi` 需重新 `npm link` 后才指向新 bin。
+
+### 暂未解决的问题
+
+- 失败后无法续跑同一轮工具循环；工具结果仍不会进入短期记忆。
+
 ## 后续记录格式
 
 提交架构相关改动时，在**同一次 commit** 中追加章节，结构如下：

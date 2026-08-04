@@ -6,7 +6,7 @@
   "description": "Mimiclaw个人智能体",
   "scripts": {
     "dev": "tsx src/app/main.ts",
-    "start": "node dist/app/main.js",
+    "start": "node scripts/mimi.mjs",
     "clean": "node scripts/clean.mjs",
     "prebuild": "npm run clean",
     "build": "tsc -p tsconfig.build.json",
@@ -37,6 +37,6 @@
     "node": ">=20"
   },
   "bin": {
-    "mimi": "dist/app/main.js"
+    "mimi": "scripts/mimi.mjs"
   }
 }

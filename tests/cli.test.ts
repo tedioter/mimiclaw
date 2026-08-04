@@ -16,6 +16,11 @@ describe("CLI 斜杠命令候选", () => {
     expect(resolveSlashSubmission("/", candidates, 1, true)).toBe("/exit");
   });
 
+  it("候选可见时单独输入斜杠会提交高亮候选", () => {
+    expect(resolveSlashSubmission("/", candidates, 0, false, true)).toBe("/model");
+    expect(resolveSlashSubmission("/", candidates, 1, false, true)).toBe("/exit");
+  });
+
   it("没有候选时保留原始输入", () => {
     expect(resolveSlashSubmission("/unknown", [], 0, false)).toBe("/unknown");
   });

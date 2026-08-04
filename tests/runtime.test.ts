@@ -117,6 +117,48 @@ describe("Agent 应用层运行循环", () => {
     }
   });
 
+  it("turn_error 仍提交轮次记忆", async () => {
+    const bus = new MessageBus();
+    const control = createAgentLoopControl();
+    const inbound: InboundMessage = {
+      platform: "cli",
+      text: "切换模型的命令有 bug 吗",
+      messageId: "message-error"
+    };
+    const committed = createDeferred<{ inbound: InboundMessage; assistantReply: string }>();
+    const agent = mockAgent(
+      async function* respond(_inbound: InboundMessage): AsyncIterable<AgentEvent> {
+        yield {
+          type: "turn_error",
+          message: "处理失败：模型服务返回 HTTP 503：Service is too busy."
+        };
+      },
+      async (received, assistantReply) => {
+        committed.resolve({ inbound: received, assistantReply });
+      }
+    );
+    const runtime = new AgentRuntime(
+      makeConfig(temporaryDirectory()),
+      agent,
+      createStubModelRegistry(),
+      bus
+    );
+    const agentTask = runtime.runLoop(control);
+    const dispatchTask = bus.dispatchHandlers();
+
+    try {
+      bus.publishInboundMessage(inbound);
+      await expect(committed.promise).resolves.toEqual({
+        inbound,
+        assistantReply: "处理失败：模型服务返回 HTTP 503：Service is too busy."
+      });
+    } finally {
+      control.stop();
+      bus.close();
+      await Promise.allSettled([agentTask, dispatchTask]);
+    }
+  });
+
   it("按展示配置过滤思考与工具意图事件", async () => {
     const bus = new MessageBus();
     const control = createAgentLoopControl();

@@ -81,6 +81,8 @@ export class AgentRuntime {
         });
         if (event.type === "turn_done") {
           await agent.handleTurnDone(inbound, event.text);
+        } else if (event.type === "turn_error") {
+          await agent.handleTurnDone(inbound, event.message);
         }
       }
     }
